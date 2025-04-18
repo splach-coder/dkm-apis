@@ -40,7 +40,7 @@ def write_json(data):
 
 def upload_file_to_blob(file, report_id):
     filename = file.filename
-    blob_path = f"{FOLDER_NAME}/reports/files/{report_id}/{filename}"
+    blob_path = f"{FOLDER_NAME}/reports/files/{report_id}-{filename}"
     blob, _ = get_blob_client(blob_path)
 
     blob.upload_blob(file.stream.read(), overwrite=True, content_settings=ContentSettings(content_type=file.content_type))

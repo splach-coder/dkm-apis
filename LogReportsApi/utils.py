@@ -1,5 +1,6 @@
+from io import BytesIO
 import json
-from json import decoder
+from requests_toolbelt.multipart import decoder
 import logging
 import uuid
 from LogReportsApi.functions import read_json, write_json, upload_file_to_blob, generate_report
@@ -9,15 +10,19 @@ import azure.functions as func
 def handle_get_reports(req: func.HttpRequest) -> func.HttpResponse:
     try:
         user = req.params.get("user")
+        company = req.params.get("company")
         reports = read_json()
 
         if user:
             reports = [r for r in reports if r.get("email") == user]
+        elif company:
+            reports = [r for r in reports if r.get("company", "").lower() == company.lower()]
 
         return func.HttpResponse(json.dumps(reports), mimetype="application/json", status_code=200)
     except Exception as e:
         logging.error(f"GET error: {str(e)}")
         return func.HttpResponse("Error fetching reports", status_code=500)
+
 
 # POST new report
 def handle_post_report(req: func.HttpRequest) -> func.HttpResponse:
@@ -47,7 +52,7 @@ def handle_post_report(req: func.HttpRequest) -> func.HttpResponse:
 
                 file_obj = FileObj(
                     filename,
-                    stream=part.content,  # raw bytes
+                    stream=BytesIO(part.content),
                     mime=part.headers.get(b'Content-Type', b'application/octet-stream').decode()
                 )
 

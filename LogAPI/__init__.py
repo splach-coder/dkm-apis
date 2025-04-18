@@ -40,7 +40,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # Make sure to assign BOOLEAN value, not a string
             new_data["finalResult"]["allStepsSucceeded"] = all_steps_succeeded  # Use direct assignment with boolean
             new_data["finalResult"]["checker"] = checker  # Use direct assignment
-            new_data["companyName"] = "company"  # Use direct assignment
+            new_data["companyName"] = company  # Use direct assignment
 
             # Append the new log and save
             logs.append(new_data)

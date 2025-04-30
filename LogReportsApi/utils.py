@@ -23,7 +23,6 @@ def handle_get_reports(req: func.HttpRequest) -> func.HttpResponse:
         logging.error(f"GET error: {str(e)}")
         return func.HttpResponse("Error fetching reports", status_code=500)
 
-
 # POST new report
 def handle_post_report(req: func.HttpRequest) -> func.HttpResponse:
     try:

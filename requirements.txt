@@ -5,3 +5,5 @@
 azure-functions
 azure-storage-blob==12.24.1
 requests-toolbelt==1.0.0
+azure-keyvault-secrets==4.9.0
+pandas==2.2.3

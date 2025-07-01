@@ -6,7 +6,6 @@ from LogAPI.functions import load_logs, save_logs
 def main(req: func.HttpRequest) -> func.HttpResponse:
     method = req.method
     company = req.route_params.get('companyName')
-    run_id = req.route_params.get('runId')
 
     if method == "POST":
         try:
@@ -14,7 +13,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             new_data = req.get_json()
             
             # First load existing logs
-            logs = load_logs(company)
+            logs = load_logs()
             
             # Process only the new entry's finalResult
             all_steps_succeeded = True
@@ -46,20 +45,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             logs.append(new_data)
 
             # Save updated logs to the blob storage
-            save_logs(company, logs)
+            save_logs(logs)
             return func.HttpResponse("Log saved ✅", status_code=200)
         except Exception as e:
             return func.HttpResponse(f"Error: {str(e)}", status_code=500)
 
-    elif method == "GET" and run_id:
-        logs = load_logs(company)
-        result = next((log for log in logs if log["runId"] == run_id), None)
-        if result:
-            return func.HttpResponse(json.dumps(result), mimetype="application/json")
-        return func.HttpResponse("Log not found", status_code=404)
-
     elif method == "GET":
-        logs = load_logs(company)
+        logs = load_logs()
         return func.HttpResponse(json.dumps(logs), mimetype="application/json")
 
     return func.HttpResponse("Not allowed", status_code=405)

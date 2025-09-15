@@ -55,10 +55,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(json.dumps(logs), mimetype="application/json")
 
     elif method == "PATCH":
-        # Check if this is the completion route
-        path = req.url.split('/')[-1]  # Get the last part of the URL
+        # Add diagnostic logging
+        logging.info(f"PATCH request received")
+        logging.info(f"Full URL: {req.url}")
+        logging.info(f"Route params: {req.route_params}")
+        logging.info(f"Query params: {dict(req.params)}")
         
-        if path == "complete":
+        # Check if this is the completion route via query parameter
+        action = req.params.get('action')
+        logging.info(f"Action parameter: {action}")
+        
+        if action == "complete":
             try:
                 # Handle completion route
                 req_data = req.get_json()
@@ -75,7 +82,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 log_index = None
                 
                 for i, log in enumerate(logs):
-                    if log.get("ref") == file_ref:
+                    if log.get("fileRef") == file_ref:
                         found_log = log
                         log_index = i
                         break

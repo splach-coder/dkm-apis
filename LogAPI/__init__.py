@@ -54,4 +54,56 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         logs = load_logs()
         return func.HttpResponse(json.dumps(logs), mimetype="application/json")
 
+    elif method == "PATCH":
+        # Check if this is the completion route
+        path = req.url.split('/')[-1]  # Get the last part of the URL
+        
+        if path == "complete":
+            try:
+                # Handle completion route
+                req_data = req.get_json()
+                file_ref = req_data.get("fileRef")
+                
+                if not file_ref:
+                    return func.HttpResponse("Missing fileRef in request body", status_code=400)
+                
+                # Load existing logs
+                logs = load_logs()
+                
+                # Find the matching object by ref field
+                found_log = None
+                log_index = None
+                
+                for i, log in enumerate(logs):
+                    if log.get("ref") == file_ref:
+                        found_log = log
+                        log_index = i
+                        break
+                
+                if not found_log:
+                    return func.HttpResponse(f"No log found with fileRef: {file_ref}", status_code=404)
+                
+                # Add the final step
+                final_step = {
+                    "finalStep": {
+                        "status": "success"
+                    }
+                }
+                
+                # Add to the Steps array
+                if "Steps" not in logs[log_index]:
+                    logs[log_index]["Steps"] = []
+                
+                logs[log_index]["Steps"].append(final_step)
+                
+                # Save updated logs
+                save_logs(logs)
+                
+                return func.HttpResponse("Workflow completed successfully ✅", status_code=200)
+                
+            except Exception as e:
+                return func.HttpResponse(f"Error completing workflow: {str(e)}", status_code=500)
+        else:
+            return func.HttpResponse("PATCH method not supported for this route", status_code=405)
+
     return func.HttpResponse("Not allowed", status_code=405)

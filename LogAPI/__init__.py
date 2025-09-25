@@ -1,5 +1,6 @@
 import logging
 import azure.functions as func
+import re
 import json
 from datetime import datetime
 from LogAPI.functions import (
@@ -139,6 +140,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         try:
             req_data = req.get_json()
             file_ref = req_data.get("fileRef")
+            if file_ref:
+                file_ref = re.sub(r"\s+", "", file_ref.lower())
 
             if not file_ref:
                 return func.HttpResponse("Missing fileRef in request body", status_code=400)
@@ -147,6 +150,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             logs = load_logs()
             target_log = None
             for log in logs:
+                LogFileRef = log.get("fileRef", "")
+                LogFileRef = re.sub(r"\s+", "", LogFileRef.lower())
                 if file_ref in log.get("fileRef", "") or log.get("fileRef") == file_ref:
                     target_log = log
                     break

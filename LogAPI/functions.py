@@ -3,7 +3,6 @@ import logging
 from azure.storage.blob import BlobServiceClient
 from datetime import datetime, timedelta
 import os
-
 import requests
 
 CONTAINER_NAME = "document-intelligence"
@@ -36,7 +35,7 @@ def get_blob_path(data_type, company=None, date_str=None):
     elif data_type == "pending":
         return f"{FOLDER_NAME}/pending/pending_flows.json"
     elif data_type == "all":
-        return f"{FOLDER_NAME}/Uploads.json"  # Your original file
+        return f"{FOLDER_NAME}/Uploads.json"
     elif data_type == "company":
         today = datetime.utcnow().strftime("%Y-%m-%d")
         return f"{FOLDER_NAME}/daily/{company}/{today}.json"
@@ -236,7 +235,6 @@ def check_and_timeout_pending():
         save_json_to_blob(get_blob_path("pending"), active_pending)
     
     return timed_out
-
     
 def call_declaration_lookup_logic_app(commercial_ref):
     """Call Logic App to get declaration ID using clean commercial reference"""

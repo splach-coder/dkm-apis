@@ -203,4 +203,73 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
     
+    elif method == "DELETE":
+        try:
+            # Get declaration ID from query parameter
+            declaration_id_str = req.params.get('declarationId')
+            
+            if not declaration_id_str:
+                return func.HttpResponse(
+                    json.dumps({"success": False, "error": "declarationId parameter is required"}),
+                    status_code=400,
+                    mimetype="application/json"
+                )
+            
+            # Convert to integer for comparison (since declarationId is stored as int in JSON)
+            try:
+                declaration_id = int(declaration_id_str)
+            except ValueError:
+                return func.HttpResponse(
+                    json.dumps({"success": False, "error": "declarationId must be a valid number"}),
+                    status_code=400,
+                    mimetype="application/json"
+                )
+            
+            # Load existing violations
+            violations_data = load_json_from_blob('violations.json') or {'violations': []}
+            
+            # Find and remove the violation with matching declarationId
+            original_count = len(violations_data['violations'])
+            violations_data['violations'] = [
+                v for v in violations_data['violations'] 
+                if v.get('declarationId') != declaration_id  # Now comparing int to int
+            ]
+            
+            new_count = len(violations_data['violations'])
+            removed_count = original_count - new_count
+            
+            if removed_count == 0:
+                return func.HttpResponse(
+                    json.dumps({
+                        "success": False, 
+                        "error": f"No violation found with declarationId: {declaration_id}"
+                    }),
+                    status_code=404,
+                    mimetype="application/json"
+                )
+            
+            # Save updated violations back to blob
+            save_json_to_blob('violations.json', violations_data)
+            
+            logging.info(f"Deleted violation with declarationId: {declaration_id}")
+            
+            return func.HttpResponse(
+                json.dumps({
+                    "success": True,
+                    "message": f"Violation with declarationId {declaration_id} deleted successfully",
+                    "removedCount": removed_count,
+                    "remainingViolations": new_count
+                }),
+                status_code=200,
+                mimetype="application/json"
+            )
+            
+        except Exception as e:
+            logging.error(f"DELETE error: {str(e)}")
+            return func.HttpResponse(
+                json.dumps({"success": False, "error": str(e)}),
+                status_code=500,
+                mimetype="application/json"
+            )
+    
     return func.HttpResponse("Method not allowed", status_code=405)

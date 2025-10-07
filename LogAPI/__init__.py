@@ -265,11 +265,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     elif method == "PATCH":
         try:
             req_data = req.get_json()
-            file_ref = req_data.get("fileRef")
+            file_ref_original = req_data.get("fileRef")
             
-            if file_ref:
-                file_ref = re.sub(r"\s+", "", file_ref.lower())
-
+            if file_ref_original:
+                file_ref = re.sub(r"\s+", "", file_ref_original.lower())
+            
             if not file_ref:
                 return func.HttpResponse("Missing fileRef in request body", status_code=400)
 
@@ -279,7 +279,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             for log in logs:
                 LogFileRef = log.get("fileRef", "")
                 LogFileRef = re.sub(r"\s+", "", LogFileRef.lower())
-                if file_ref in LogFileRef or LogFileRef == file_ref:
+                if (file_ref in LogFileRef) or (LogFileRef == file_ref):
+                    logging.error(f"Match found for {file_ref}")
                     target_log = log
                     break
                 
@@ -320,7 +321,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             }
 
             # Update workflow status FIRST
-            success = update_workflow_status(file_ref, "success", update_data)
+            success = update_workflow_status(file_ref_original, "success", update_data)
 
             if not success:
                 return func.HttpResponse("Failed to update workflow", status_code=500)

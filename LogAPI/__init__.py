@@ -326,9 +326,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             if not success:
                 return func.HttpResponse("Failed to update workflow", status_code=500)
 
-            # Get declaration ID
+            # Get declaration ID 
             try:
-                clean_commercial_ref = file_ref.replace('.xlsx', '').replace('.xls', '').replace('.pdf', '').replace(' ', '')
+                clean_commercial_ref = file_ref_original.split('.')[0].replace(' ', '')
+                logging.error(target_log)
                 declaration_result = call_declaration_lookup_logic_app(clean_commercial_ref)
 
                 if declaration_result.get('found'):
@@ -336,13 +337,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         "declarationId": declaration_result.get('declarationId'),
                         "commercialReference": clean_commercial_ref
                     }
-                    update_workflow_status(file_ref, "success", additional_data)
-                    logging.info(f"Found and stored declaration ID: {declaration_result.get('declarationId')} for {file_ref}")
+                    update_workflow_status(file_ref_original, "success", additional_data)
+                    logging.info(f"Found and stored declaration ID: {declaration_result.get('declarationId')} for {file_ref_original}")
                 else:
                     logging.warning(f"No declaration ID found for commercial reference: {clean_commercial_ref}")
 
             except Exception as e:
-                logging.error(f"Failed to get declaration ID for {file_ref}: {str(e)}")
+                logging.error(f"Failed to get declaration ID for {file_ref_original}: {str(e)}")
 
             return func.HttpResponse("Workflow completed successfully ✅", status_code=200)
 

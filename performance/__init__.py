@@ -59,14 +59,12 @@ def save_parquet_to_blob(df):
     blob_client.upload_blob(buffer.getvalue(), overwrite=True)
     logging.info(f"Successfully saved Parquet to {PARQUET_BLOB_PATH}")
 
-
 def save_json_to_blob(data, blob_path):
     """Saves a dictionary as a JSON file in blob storage."""
     if not blob_service_client: raise ConnectionError("Blob service not initialized.")
     blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, blob_path)
     blob_client.upload_blob(json.dumps(data, indent=2), overwrite=True)
     logging.info(f"Successfully saved JSON to {blob_path}")
-
 
 # --- Main Function App ---
 def main(req: func.HttpRequest) -> func.HttpResponse:

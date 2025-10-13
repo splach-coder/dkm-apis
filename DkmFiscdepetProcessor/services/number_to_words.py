@@ -17,10 +17,7 @@ def amount_to_words(amount: float, currency: str, language: str) -> str:
     try:
         # Map client language to num2words language codes
         lang_map = {
-            "EN": "en",
-            "NL": "nl",
-            "DE": "de",
-            "FR": "fr"
+            "EN": "en"
         }
         
         lang_code = lang_map.get(language.upper(), "en")

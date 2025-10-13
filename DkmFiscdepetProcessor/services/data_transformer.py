@@ -98,7 +98,8 @@ def parse_line_items(line_items_str: str) -> List[LineItem]:
                 verkoopwaarde=float(item.get('verkoopwaarde', 0)),
                 netmass=float(item.get('netmass', 0)),
                 supplementaryunits=float(item.get('supplementaryunits', 0)),
-                zendtarieflijnnummer=int(item.get('zendtarieflijnnummer', 0))
+                zendtarieflijnnummer=int(item.get('zendtarieflijnnummer', 0)),
+                typepackages=str(item.get('typepackages', 0))
             )
             items.append(line_item)
         

@@ -11,6 +11,7 @@ class LineItem:
     netmass: float
     supplementaryunits: float
     zendtarieflijnnummer: int
+    typepackages: int
 
 @dataclass
 class ClientInfo:

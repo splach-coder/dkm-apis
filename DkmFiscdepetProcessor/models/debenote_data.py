@@ -25,6 +25,16 @@ class ClientInfo:
     landcode: str
     plda_operatoridentity: str
     language: str
+    
+@dataclass
+class RelatieInfo:
+    fullName: str
+    straat_en_nummer: str
+    postcode: str
+    stad: str
+    landcode: str
+    plda_operatoridentity: str
+    language: str    
 
 @dataclass
 class DebenoteData:
@@ -48,6 +58,7 @@ class DebenoteData:
     
     # Client & Supplier
     client: ClientInfo
+    relatie: RelatieInfo
     relatiecode_leverancier: str
     leverancier_naam: str
     
@@ -56,5 +67,5 @@ class DebenoteData:
     
     # Computed fields
     amount_in_words: str
-    vatnote: str  # PROCESSFACTUURNUMMER-DATE
-    formatted_total: str  # €58,154.95
+    vatnote: str
+    formatted_total: str 

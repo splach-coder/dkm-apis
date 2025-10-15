@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime
 from typing import List
-from ..models.debenote_data import DebenoteData, LineItem, ClientInfo
+from ..models.debenote_data import DebenoteData, LineItem, ClientInfo, RelatieInfo
 from .number_to_words import amount_to_words
 
 def transform_row(row: dict) -> DebenoteData:
@@ -25,7 +25,7 @@ def transform_row(row: dict) -> DebenoteData:
         # Create client info
         client = ClientInfo(
             relatiecode=row['RELATIECODE_KLANT'],
-            fullName=row['IMPORTERNAME'],
+            fullName=row['CLIENT_NAAM'],
             naam=row['KLANT'],
             straat_en_nummer=row.get('CLIENT_STRAAT_EN_NUMMER', ''),
             postcode=row.get('CLIENT_POSTCODE', ''),
@@ -33,6 +33,17 @@ def transform_row(row: dict) -> DebenoteData:
             landcode=row.get('CLIENT_LANDCODE', ''),
             plda_operatoridentity=row.get('CLIENT_PLDA_OPERATORIDENTITY', ''),
             language=row.get('CLIENT_LANGUAGE', 'EN')
+        )
+        
+        # Create relatie info
+        relatie = RelatieInfo(
+            fullName=row.get('RELATIE_NAAM', ''),
+            straat_en_nummer=row.get('RELATIE_STRAAT_EN_NUMMER', ''),
+            postcode=row.get('RELATIE_POSTCODE', ''),
+            stad=row.get('RELATIE_STAD', ''),
+            landcode=row.get('RELATIE_LANDCODE', ''),
+            plda_operatoridentity=row.get('RELATIE_PLDA_OPERATORIDENTITY', ''),
+            language=row.get('RELATIE_LANGUAGE', 'EN')
         )
         
         # Calculate amount in words
@@ -48,6 +59,11 @@ def transform_row(row: dict) -> DebenoteData:
         # Format total amount
         formatted_total = format_amount(row['FACTUURTOTAAL'], row['MUNT'])
         
+        # Check if the email field exists and is a real email
+        email = row.get('NAME', '')
+        if '@' not in email:
+            email = ''  # Clear invalid email    
+        
         # Build DebenoteData object
         debenote = DebenoteData(
             internfactuurnummer=row['INTERNFACTUURNUMMER'],
@@ -62,6 +78,7 @@ def transform_row(row: dict) -> DebenoteData:
             referentie_klant=row.get('REFERENTIE_KLANT', ''),
             c88nummer=row['C88NUMMER'],
             client=client,
+            relatie=relatie,
             email=row.get('NAME', ''),
             relatiecode_leverancier=row['RELATIECODE_LEVERANCIER'],
             leverancier_naam=row['LEVERANCIERSNAAM'],

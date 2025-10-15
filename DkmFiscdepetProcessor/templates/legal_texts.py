@@ -9,7 +9,7 @@ def get_legal_text(language: str) -> str:
     Returns:
         Legal text in specified language
     """
-    language = "EN"
+    
     texts = {
         "NL": (
             "Intra-communautaire levering: vrijstelling van BTW overeenkomstig art. 39bis, 1° van het WBTW / "

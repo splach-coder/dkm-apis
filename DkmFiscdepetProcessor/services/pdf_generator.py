@@ -97,7 +97,8 @@ def draw_header_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
     c.drawString(x_address, y_address, f"{data.client.landcode}{data.client.plda_operatoridentity}")
     
     y_address -= 15
-    c.drawString(x_address, y_address, f"mail: {data.email}")
+    if data.email is not None and data.email.strip() != "":
+        c.drawString(x_address, y_address, f"mail: {data.email}")
     
     # Tighter spacing
     y = start_y - 58*mm
@@ -139,7 +140,9 @@ def parse_referentie_klant(ref_text: str):
     return components
 
 def draw_document_info_clean(c, data, y: float, width: float) -> float:
-    """Draw document information in aligned label layout with field names for each REFERENCE line."""
+    """Draw document information in aligned label layout with field names for each REFERENCE line.
+       Skips lines with empty or null values.
+    """
 
     ref_components = parse_referentie_klant(data.referentie_klant)
 
@@ -177,18 +180,16 @@ def draw_document_info_clean(c, data, y: float, width: float) -> float:
         ("Date:", "date"),
     ]
 
-    # Draw each field + value, word-wrapped
+    # Draw each field only if value is not empty
     for label, key in field_labels:
-        value = ref_components.get(key, "")
+        value = (ref_components.get(key) or "").strip()
+        if not value:
+            continue  # Skip this line entirely
+
         full_text = f"{label} {value}".strip()
-
-        if not full_text or full_text == label:  # skip empty line
-            c.drawString(text_x, y, label)
-            y -= line_gap
-            continue
-
         words = full_text.split()
         current_line = ""
+
         for word in words:
             test_line = f"{current_line} {word}".strip()
             line_width = stringWidth(test_line, font_name, font_size)
@@ -198,6 +199,7 @@ def draw_document_info_clean(c, data, y: float, width: float) -> float:
                 current_line = word
             else:
                 current_line = test_line
+
         if current_line:
             c.drawString(text_x, y, current_line)
             y -= line_gap
@@ -417,38 +419,52 @@ def draw_totals_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
     return y
 
 def draw_footer_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: float, height: float):
-    """Draw clean professional footer - dynamically positioned based on content"""
+    """Draw clean professional footer - dynamically positioned based on content.
+       This version uses the 'relatie' information instead of 'client'.
+    """
     
-    # Use dynamic Y position but ensure minimum spacing from bottom
-    # If y is too low (content ran long), position footer at safe minimum
+    # Minimum safe footer Y position
     min_footer_y = 70 * mm
-    
     if y < min_footer_y:
         y = min_footer_y
     
+    # Header text in footer
     c.setFont("Helvetica-Bold", 9)
     c.setFillColor(colors.black)
     c.drawString(23 * mm, y, "DKM-CUSTOMS IS FISCAL REPRESENTATIVE FOR:")
     y -= 10
 
+    # Draw relatie info (formerly client info)
     c.setFont("Helvetica", 9)
-    c.drawString(23 * mm, y, data.client.fullName.upper())
+    c.drawString(23 * mm, y, data.relatie.fullName.upper())
     y -= 9
-    c.drawString(23 * mm, y, data.client.straat_en_nummer.upper())
+    c.drawString(23 * mm, y, data.relatie.straat_en_nummer.upper())
     y -= 9
-    c.drawString(23 * mm, y, f"{data.client.landcode} {data.client.postcode} {data.client.stad.upper()}")
+    c.drawString(
+        23 * mm,
+        y,
+        f"{data.relatie.landcode} {data.relatie.postcode} {data.relatie.stad.upper()}"
+    )
+    y -= 9
+    
+    c.drawString(
+        23 * mm,
+        y,
+        f"{data.relatie.landcode}{data.relatie.plda_operatoridentity}"
+    )
     y -= 9
 
-    # Map country codes to names
+    # Map country codes to names for readability
     country_names = {
         "FR": "FRANCE", "NL": "NETHERLAND", "DE": "GERMANY",
         "PT": "PORTUGAL", "SK": "SLOVAKIA", "BE": "BELGIUM",
         "ES": "SPAIN", "IT": "ITALY", "PL": "POLAND", "AT": "AUSTRIA"
     }
-    country = country_names.get(data.client.landcode, data.client.landcode)
+    country = country_names.get(data.relatie.landcode, data.relatie.landcode)
     c.drawString(23 * mm, y, country)
     y -= 9
 
+    # Draw VAT number (same as before)
     c.setFont("Helvetica-Bold", 9)
     c.drawString(23 * mm, y, f"FISCAL VAT NUMBER {data.btwnummer}")
 

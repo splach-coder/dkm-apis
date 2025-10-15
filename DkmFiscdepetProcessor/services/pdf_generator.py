@@ -60,9 +60,9 @@ def draw_header_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
         
         if os.path.exists(logo_path):
             # Bigger logo
-            logo_width = 95*mm
-            logo_height = 65*mm
-            c.drawImage(logo_path, 10*mm, y - logo_height, 
+            logo_width = 73*mm
+            logo_height = 58*mm
+            c.drawImage(logo_path, 22*mm, y - logo_height + 5*mm, 
                        width=logo_width, height=logo_height, 
                        preserveAspectRatio=True, mask='auto')
         else:
@@ -79,12 +79,12 @@ def draw_header_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
         c.setFillColor(colors.black)
     
     # COMPANY ADDRESS (right side of logo)
-    x_address = 100*mm 
-    y_address = y - 22*mm
+    x_address = 110*mm 
+    y_address = y - 20*mm
     
     c.setFont("Helvetica-Bold", 11)
     c.setFillColor(colors.black)
-    c.drawString(x_address, y_address, data.client.naam.upper())
+    c.drawString(x_address, y_address, data.client.fullName.upper())
     
     c.setFont("Helvetica", 10)
     y_address -= 12
@@ -96,35 +96,54 @@ def draw_header_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
     y_address -= 11
     c.drawString(x_address, y_address, f"{data.client.landcode}{data.client.plda_operatoridentity}")
     
+    y_address -= 15
+    c.drawString(x_address, y_address, f"mail: {data.email}")
+    
     # Tighter spacing
-    y = start_y - 60*mm
+    y = start_y - 58*mm
     return y
 
 def parse_referentie_klant(ref_text: str):
     """
-    Parse REFERENTIE_KLANT to extract all components and remove any duplicates or repetitions.
-    Handles repeated patterns like 'As per attached copy...' or 'From: ...'.
+    Parse REFERENTIE_KLANT to extract all components as full lines.
+    Returns empty strings for missing data.
     """
     components = {
         'invoice': '',
         'commercial_ref': '',
-        'from_supplier': '',
-        'attached_copy': '',
+        'From': '',
+        'As per attached copy': '',
         'date': ''
     }
-    
+ 
     if not ref_text:
         return components
-    
-    # Normalize and clean
-    inv, comercial, fromSupplier, attachedCopy, date = ref_text.replace('\n', '').replace('\r', '\n').strip().split('\n')
-    
-    components['invoice'] = inv
-    components['commercial_ref'] = comercial
-    components['from_supplier'] = fromSupplier
-    components['attached_copy'] = attachedCopy
-    components['date'] = date
-    
+ 
+    # Extract Invoice
+    invoice_match = re.search(r'(Invoice:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
+    if invoice_match:
+        components['invoice'] = invoice_match.group(1).strip()
+ 
+    # Extract Commercial reference
+    commercial_match = re.search(r'(Commercial reference:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
+    if commercial_match:
+        components['commercial_ref'] = commercial_match.group(1).strip()
+ 
+    # Extract From
+    from_match = re.search(r'(From:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
+    if from_match:
+        components['From'] = from_match.group(1).strip()
+ 
+    # Extract Attached copy
+    attached_match = re.search(r'(As per attached copy:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
+    if attached_match:
+        components['As per attached copy'] = attached_match.group(1).strip()
+ 
+    # Extract Date
+    date_match = re.search(r'(Datum:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
+    if date_match:
+        components['date'] = date_match.group(1).strip()
+ 
     return components
 
 def draw_document_info_clean(c, data, y: float, width: float) -> float:
@@ -412,7 +431,7 @@ def draw_footer_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
     y -= 10
 
     c.setFont("Helvetica", 9)
-    c.drawString(23 * mm, y, data.client.naam.upper())
+    c.drawString(23 * mm, y, data.client.fullName.upper())
     y -= 9
     c.drawString(23 * mm, y, data.client.straat_en_nummer.upper())
     y -= 9
@@ -421,7 +440,7 @@ def draw_footer_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
 
     # Map country codes to names
     country_names = {
-        "FR": "FRANCE", "NL": "NETHERLANDS", "DE": "GERMANY",
+        "FR": "FRANCE", "NL": "NETHERLAND", "DE": "GERMANY",
         "PT": "PORTUGAL", "SK": "SLOVAKIA", "BE": "BELGIUM",
         "ES": "SPAIN", "IT": "ITALY", "PL": "POLAND", "AT": "AUSTRIA"
     }

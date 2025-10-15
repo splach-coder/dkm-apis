@@ -17,6 +17,7 @@ class LineItem:
 class ClientInfo:
     """Client information from RELATIONS table"""
     relatiecode: str
+    fullName: str
     naam: str
     straat_en_nummer: str
     postcode: str
@@ -37,6 +38,8 @@ class DebenoteData:
     periode: str
     factuurtotaal: float
     munt: str
+    email: str
+    
     
     # References
     commercialreference: str

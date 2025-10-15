@@ -25,6 +25,7 @@ def transform_row(row: dict) -> DebenoteData:
         # Create client info
         client = ClientInfo(
             relatiecode=row['RELATIECODE_KLANT'],
+            fullName=row['IMPORTERNAME'],
             naam=row['KLANT'],
             straat_en_nummer=row.get('CLIENT_STRAAT_EN_NUMMER', ''),
             postcode=row.get('CLIENT_POSTCODE', ''),
@@ -61,6 +62,7 @@ def transform_row(row: dict) -> DebenoteData:
             referentie_klant=row.get('REFERENTIE_KLANT', ''),
             c88nummer=row['C88NUMMER'],
             client=client,
+            email=row.get('NAME', ''),
             relatiecode_leverancier=row['RELATIECODE_LEVERANCIER'],
             leverancier_naam=row['LEVERANCIERSNAAM'],
             line_items=line_items,

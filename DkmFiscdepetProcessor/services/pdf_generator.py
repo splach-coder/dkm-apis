@@ -105,56 +105,48 @@ def draw_header_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
 
 def parse_referentie_klant(ref_text: str):
     """
-    Parse REFERENTIE_KLANT to extract all components as full lines.
-    Returns empty strings for missing data.
+    Parse REFERENTIE_KLANT text and extract:
+        - Invoice
+        - Commercial reference
+        - From
+        - As per attached copy
+        - Date (Datum)
+    Always returns 5 keys, even if some are missing.
     """
+    
+    # Clean and normalize
+    text = ref_text.replace('\r', '').strip()
+
+    # Extract each section using regex (non-greedy, up to next known label)
+    invoice_match = re.search(r"Invoice:\s*(.*?)(?=\s*Commercial reference:|$)", text, re.DOTALL | re.IGNORECASE)
+    commercial_match = re.search(r"Commercial reference:\s*(.*?)(?=\s*From:|As per attached copy:|Datum:|$)", text, re.DOTALL | re.IGNORECASE)
+    from_match = re.search(r"From:\s*(.*?)(?=\s*As per attached copy:|Datum:|$)", text, re.DOTALL | re.IGNORECASE)
+    attached_match = re.search(r"As per attached copy:\s*(.*?)(?=\s*Datum:|$)", text, re.DOTALL | re.IGNORECASE)
+    date_match = re.search(r"Datum:\s*(.*)", text, re.IGNORECASE)
+
+    # Helper to clean captured text
+    def clean(value):
+        return value.strip() if value else ""
+
     components = {
-        'invoice': '',
-        'commercial_ref': '',
-        'From': '',
-        'As per attached copy': '',
-        'date': ''
+        'invoice': clean(invoice_match.group(1) if invoice_match else ""),
+        'commercial_ref': clean(commercial_match.group(1) if commercial_match else ""),
+        'From': clean(from_match.group(1) if from_match else ""),
+        'As per attached copy': clean(attached_match.group(1) if attached_match else ""),
+        'date': clean(date_match.group(1) if date_match else "")
     }
- 
-    if not ref_text:
-        return components
- 
-    # Extract Invoice
-    invoice_match = re.search(r'(Invoice:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
-    if invoice_match:
-        components['invoice'] = invoice_match.group(1).strip()
- 
-    # Extract Commercial reference
-    commercial_match = re.search(r'(Commercial reference:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
-    if commercial_match:
-        components['commercial_ref'] = commercial_match.group(1).strip()
- 
-    # Extract From
-    from_match = re.search(r'(From:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
-    if from_match:
-        components['From'] = from_match.group(1).strip()
- 
-    # Extract Attached copy
-    attached_match = re.search(r'(As per attached copy:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
-    if attached_match:
-        components['As per attached copy'] = attached_match.group(1).strip()
- 
-    # Extract Date
-    date_match = re.search(r'(Datum:\s*.+?)(?=\r?\n|$)', ref_text, re.IGNORECASE)
-    if date_match:
-        components['date'] = date_match.group(1).strip()
- 
+
     return components
 
 def draw_document_info_clean(c, data, y: float, width: float) -> float:
-    """Draw document information in aligned label layout with proper word wrapping per line."""
+    """Draw document information in aligned label layout with field names for each REFERENCE line."""
 
     ref_components = parse_referentie_klant(data.referentie_klant)
 
     label_x = 23 * mm
     text_x = 70 * mm
     right_margin = width - 5 * mm
-    line_gap = 12  # Tighter spacing
+    line_gap = 12
     font_name = "Helvetica"
     font_size = 9
 
@@ -176,17 +168,26 @@ def draw_document_info_clean(c, data, y: float, width: float) -> float:
     # --- REFERENCE ---
     c.drawString(label_x, y, "REFERENCE:")
 
-    # Collect each field value as its own line
-    ref_text_parts = []
-    fields = ['invoice', 'commercial_ref', 'from_supplier', 'attached_copy', 'date']
-    for key in fields:
-        value = ref_components.get(key)
-        if value:
-            ref_text_parts.append(value.strip())
+    # Field mapping (label → parse_referentie_klant key)
+    field_labels = [
+        ("Invoice:", "invoice"),
+        ("Commercial reference:", "commercial_ref"),
+        ("From:", "From"),
+        ("As per attached copy:", "As per attached copy"),
+        ("Date:", "date"),
+    ]
 
-    # Draw each line — aligned with other value fields (text_x)
-    for line in ref_text_parts:
-        words = line.split()
+    # Draw each field + value, word-wrapped
+    for label, key in field_labels:
+        value = ref_components.get(key, "")
+        full_text = f"{label} {value}".strip()
+
+        if not full_text or full_text == label:  # skip empty line
+            c.drawString(text_x, y, label)
+            y -= line_gap
+            continue
+
+        words = full_text.split()
         current_line = ""
         for word in words:
             test_line = f"{current_line} {word}".strip()
@@ -201,7 +202,7 @@ def draw_document_info_clean(c, data, y: float, width: float) -> float:
             c.drawString(text_x, y, current_line)
             y -= line_gap
 
-    return y - 3  # Reduced spacing
+    return y - 3
 
 def wrap_description(text: str, max_width: float, font_name: str, font_size: int) -> list:
     """
@@ -249,10 +250,10 @@ def draw_professional_table(c: canvas.Canvas, items: list, y: float, width: floa
     # Column definitions
     col_code = (25*mm) + x_shift
     col_desc = (45*mm) + x_shift
-    col_qty = (105*mm) + x_shift
-    col_weight = (125*mm) + x_shift
-    col_stat = (148*mm) + x_shift
-    col_value = (175*mm) + x_shift
+    col_qty = (100*mm) + x_shift
+    col_weight = (120*mm) + x_shift
+    col_stat = (143*mm) + x_shift
+    col_value = (170*mm) + x_shift
     
     # Description column max width (from col_desc to col_qty)
     desc_max_width = col_qty - col_desc - 3*mm

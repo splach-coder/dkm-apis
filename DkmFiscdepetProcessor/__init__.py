@@ -93,9 +93,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         
         # 3. Update state with max processed ID
         if pdfs:
-            max_id = get_max_id(rows)
-            update_state(max_id, len(pdfs))
-            logging.info(f"Updated state: lastProcessedId = {max_id}")
+            processed_ids = [p.internfactuurnummer for p in pdfs if getattr(p, "internfactuurnummer", None)]
+            new_max_id = max(processed_ids)
+            update_state(processed_ids, new_max_id)
+
+            logging.info(f"Updated state: lastProcessedId = {new_max_id}")
         
         # 4. Build response
         response = APIResponse(

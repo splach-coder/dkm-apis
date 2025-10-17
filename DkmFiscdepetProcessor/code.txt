@@ -1,0 +1,1167 @@
+The following is a digest of the repository "DkmFiscdepetProcessor".
+This digest is designed to be easily parsed by Large Language Models.
+
+--- SUMMARY ---
+Repository: DkmFiscdepetProcessor
+Files Analyzed: 11
+Total Text Size: 35.58 KB
+Estimated Tokens (text only): ~8,976
+
+--- DIRECTORY STRUCTURE ---
+DkmFiscdepetProcessor/
+├── images/
+│   └── dkm-logo.png [binary]
+├── models/
+│   ├── debenote_data.py
+│   └── response_model.py
+├── services/
+│   ├── data_transformer.py
+│   ├── number_to_words.py
+│   ├── pdf_generator.py
+│   └── state_manager.py
+├── templates/
+│   ├── legal_texts.py
+│   └── pdf_layout.py
+├── __init__.py
+└── function.json
+
+
+--- FILE CONTENTS ---
+============================================================
+FILE: models/debenote_data.py
+============================================================
+from dataclasses import dataclass
+from typing import List
+
+@dataclass
+class LineItem:
+    """Individual line item in debenote"""
+    goederencode: str
+    goederenomschrijving: str
+    aantal_gewicht: float
+    verkoopwaarde: float
+    netmass: float
+    supplementaryunits: float
+    zendtarieflijnnummer: int
+    typepackages: int
+
+@dataclass
+class ClientInfo:
+    """Client information from RELATIONS table"""
+    relatiecode: str
+    fullName: str
+    naam: str
+    straat_en_nummer: str
+    postcode: str
+    stad: str
+    landcode: str
+    plda_operatoridentity: str
+    language: str
+    
+@dataclass
+class RelatieInfo:
+    fullName: str
+    straat_en_nummer: str
+    postcode: str
+    stad: str
+    landcode: str
+    plda_operatoridentity: str
+    language: str    
+
+@dataclass
+class DebenoteData:
+    """Complete debenote data structure"""
+    # Header
+    internfactuurnummer: int
+    processfactuurnummer: int
+    btwnummer: str
+    datum: str  # formatted: 08/10/2025
+    jaar: str
+    periode: str
+    factuurtotaal: float
+    munt: str
+    email: str
+    
+    
+    # References
+    commercialreference: str
+    referentie_klant: str
+    c88nummer: int
+    
+    # Client & Supplier
+    client: ClientInfo
+    relatie: RelatieInfo
+    relatiecode_leverancier: str
+    leverancier_naam: str
+    
+    # Line items
+    line_items: List[LineItem]
+    
+    # Computed fields
+    amount_in_words: str
+    vatnote: str
+    formatted_total: str 
+
+============================================================
+FILE: models/response_model.py
+============================================================
+from dataclasses import dataclass
+from typing import List, Dict
+
+@dataclass
+class PDFResponse:
+    """Individual PDF response"""
+    internfactuurnummer: int
+    filename: str
+    pdf_base64: str
+    size_bytes: int
+    metadata: Dict
+
+@dataclass
+class APIResponse:
+    """Complete API response"""
+    success: bool
+    timestamp: str
+    processed_count: int
+    last_processed_id: int
+    pdfs: List[Dict]
+    errors: List[Dict]
+
+============================================================
+FILE: services/data_transformer.py
+============================================================
+import json
+import logging
+from datetime import datetime
+from typing import List
+from ..models.debenote_data import DebenoteData, LineItem, ClientInfo, RelatieInfo
+from .number_to_words import amount_to_words
+
+def transform_row(row: dict) -> DebenoteData:
+    """
+    Transform SQL row to DebenoteData object
+    
+    Args:
+        row: Dictionary from SQL ResultSet
+        
+    Returns:
+        DebenoteData object ready for PDF generation
+    """
+    try:
+        # Parse LINE_ITEMS JSON string
+        line_items = parse_line_items(row.get('LINE_ITEMS', '[]'))
+        
+        # Format date
+        formatted_date = format_date(row['DATUM'])
+        
+        # Create client info
+        client = ClientInfo(
+            relatiecode=row['RELATIECODE_KLANT'],
+            fullName=row['CLIENT_NAAM'],
+            naam=row['KLANT'],
+            straat_en_nummer=row.get('CLIENT_STRAAT_EN_NUMMER', ''),
+            postcode=row.get('CLIENT_POSTCODE', ''),
+            stad=row.get('CLIENT_STAD', ''),
+            landcode=row.get('CLIENT_LANDCODE', ''),
+            plda_operatoridentity=row.get('CLIENT_PLDA_OPERATORIDENTITY', ''),
+            language=row.get('CLIENT_LANGUAGE', 'EN')
+        )
+        
+        # Create relatie info
+        relatie = RelatieInfo(
+            fullName=row.get('RELATIE_NAAM', ''),
+            straat_en_nummer=row.get('RELATIE_STRAAT_EN_NUMMER', ''),
+            postcode=row.get('RELATIE_POSTCODE', ''),
+            stad=row.get('RELATIE_STAD', ''),
+            landcode=row.get('RELATIE_LANDCODE', ''),
+            plda_operatoridentity=row.get('RELATIE_PLDA_OPERATORIDENTITY', ''),
+            language=row.get('RELATIE_LANGUAGE', 'EN')
+        )
+        
+        # Calculate amount in words
+        amount_words = amount_to_words(
+            row['FACTUURTOTAAL'],
+            row['MUNT'],
+            client.language
+        )
+        
+        # Create VATNOTE (PROCESSFACTUURNUMMER-DATE)
+        vatnote = f"{row['PROCESSFACTUURNUMMER']}-{formatted_date}"
+        
+        # Format total amount
+        formatted_total = format_amount(row['FACTUURTOTAAL'], row['MUNT'])
+        
+        # Check if the email field exists and is a real email
+        email = row.get('NAME', '')
+        if '@' not in email:
+            email = ''  # Clear invalid email    
+        
+        # Build DebenoteData object
+        debenote = DebenoteData(
+            internfactuurnummer=row['INTERNFACTUURNUMMER'],
+            processfactuurnummer=row['PROCESSFACTUURNUMMER'],
+            btwnummer=row['BTWNUMMER'],
+            datum=formatted_date,
+            jaar=row['JAAR'],
+            periode=row['PERIODE'],
+            factuurtotaal=row['FACTUURTOTAAL'],
+            munt=row['MUNT'],
+            commercialreference=row.get('COMMERCIALREFERENCE', ''),
+            referentie_klant=row.get('REFERENTIE_KLANT', ''),
+            c88nummer=row['C88NUMMER'],
+            client=client,
+            relatie=relatie,
+            email=row.get('NAME', ''),
+            relatiecode_leverancier=row['RELATIECODE_LEVERANCIER'],
+            leverancier_naam=row['LEVERANCIERSNAAM'],
+            line_items=line_items,
+            amount_in_words=amount_words,
+            vatnote=vatnote,
+            formatted_total=formatted_total
+        )
+        
+        return debenote
+        
+    except Exception as e:
+        logging.error(f"Error transforming row: {str(e)}")
+        raise
+
+
+def parse_line_items(line_items_str: str) -> List[LineItem]:
+    """
+    Parse LINE_ITEMS JSON string to array of LineItem objects
+    
+    Args:
+        line_items_str: JSON string from Oracle (e.g., '[{"goederencode":"..."}]')
+        
+    Returns:
+        List of LineItem objects
+    """
+    try:
+        items_data = json.loads(line_items_str)
+        
+        items = []
+        for item in items_data:
+            line_item = LineItem(
+                goederencode=item.get('goederencode', ''),
+                goederenomschrijving=item.get('goederenomschrijving', ''),
+                aantal_gewicht=float(item.get('aantal_gewicht', 0)),
+                verkoopwaarde=float(item.get('verkoopwaarde', 0)),
+                netmass=float(item.get('netmass', 0)),
+                supplementaryunits=float(item.get('supplementaryunits', 0)),
+                zendtarieflijnnummer=int(item.get('zendtarieflijnnummer', 0)),
+                typepackages=str(item.get('typepackages', 0))
+            )
+            items.append(line_item)
+        
+        return items
+        
+    except json.JSONDecodeError as e:
+        logging.error(f"Failed to parse LINE_ITEMS JSON: {str(e)}")
+        return []
+    except Exception as e:
+        logging.error(f"Error parsing line items: {str(e)}")
+        return []
+
+
+def format_date(date_str: str) -> str:
+    """
+    Format date from YYYYMMDD to DD/MM/YYYY
+    
+    Args:
+        date_str: Date string like "20251008"
+        
+    Returns:
+        Formatted date like "08/10/2025"
+    """
+    try:
+        date_obj = datetime.strptime(date_str, "%Y%m%d")
+        return date_obj.strftime("%d/%m/%Y")
+    except Exception as e:
+        logging.warning(f"Failed to format date {date_str}: {str(e)}")
+        return date_str
+
+
+def format_amount(amount: float, currency: str) -> str:
+    """
+    Format amount with currency symbol
+    
+    Args:
+        amount: Numeric amount (e.g., 58154.95)
+        currency: Currency code (e.g., "EUR")
+        
+    Returns:
+        Formatted string like "€58,154.95"
+    """
+    currency_symbols = {
+        "EUR": "€",
+        "USD": "$",
+        "GBP": "£"
+    }
+    
+    symbol = currency_symbols.get(currency, currency)
+    return f"{symbol}{amount:,.2f}"
+
+
+def clean_text(text: str) -> str:
+    """
+    Clean text by removing extra whitespace and line breaks
+    
+    Args:
+        text: Raw text with \r\n and extra spaces
+        
+    Returns:
+        Cleaned text
+    """
+    if not text:
+        return ""
+    
+    # Replace \r\n with spaces
+    cleaned = text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+    
+    # Remove multiple spaces
+    cleaned = ' '.join(cleaned.split())
+    
+    return cleaned.strip()
+
+============================================================
+FILE: services/number_to_words.py
+============================================================
+from num2words import num2words
+import logging
+
+def amount_to_words(amount: float, currency: str, language: str) -> str:
+    """
+    Convert amount to words in specified language
+    Matches format from sample PDFs
+    
+    Args:
+        amount: Numeric amount (e.g., 48771.63)
+        currency: Currency code (e.g., "EUR")
+        language: Language code (e.g., "EN", "NL", "DE", "FR")
+        
+    Returns:
+        Amount in words (e.g., "forty-eight thousand seven hundred seventy-one , sixty-three EUR")
+    """
+    try:
+        # Map client language to num2words language codes
+        lang_map = {
+            "EN": "en"
+        }
+        
+        lang_code = lang_map.get(language.upper(), "en")
+        
+        # Split into integer and decimal parts
+        integer_part = int(amount)
+        decimal_part = int(round((amount - integer_part) * 100))
+        
+        # Convert integer part to words
+        words = num2words(integer_part, lang=lang_code)
+        
+        # Add decimal part if exists
+        if decimal_part > 0:
+            # For consistency with samples: "forty-eight thousand ... , sixty-three"
+            decimal_words = num2words(decimal_part, lang=lang_code)
+            words = f"{words} , {decimal_words}"
+        
+        # Add currency
+        words = f"{words} {currency}"
+        
+        return words
+        
+    except Exception as e:
+        logging.error(f"Error converting amount to words: {str(e)}")
+        # Fallback format
+        return f"{amount:,.2f} {currency}"
+
+============================================================
+FILE: services/pdf_generator.py
+============================================================
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from reportlab.lib import colors
+from textwrap import wrap
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.platypus import Table, TableStyle
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from io import BytesIO
+import logging
+import os
+import re
+
+from ..models.debenote_data import DebenoteData
+from ..templates.legal_texts import get_legal_text
+
+def generate_pdf(data: DebenoteData) -> bytes:
+    """Generate professional PDF from DebenoteData with pagination support"""
+    try:
+        buffer = BytesIO()
+        c = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+        
+        # Start higher for tighter layout
+        y_position = height - 25*mm
+        page_number = 1
+        
+        logging.error(f"Generating PDF for DebenoteData: {data}")
+        
+        # Draw sections with clean professional layout
+        y_position = draw_header_clean(c, data, y_position, width)
+        y_position = draw_document_info_clean(c, data, y_position, width)
+        y_position, page_number = draw_professional_table(c, data.line_items, y_position, width, height, data, page_number)
+        y_position = draw_totals_clean(c, data, y_position, width, height)
+        draw_footer_clean(c, data, y_position, width, height)
+        
+        # Add page number on first/last page
+        draw_page_number(c, page_number, width, height)
+        
+        c.save()
+        pdf_bytes = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_bytes
+    except Exception as e:
+        logging.error(f"Failed to generate PDF: {str(e)}")
+        raise
+
+def draw_header_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: float) -> float:
+    """Draw clean header with larger logo and company info"""
+    
+    start_y = y
+    
+    # LARGER DKM LOGO (left side)
+    try:
+        current_dir = os.path.dirname(os.path.dirname(__file__))
+        logo_path = os.path.join(current_dir, "images", "dkm-logo.png")
+        
+        if os.path.exists(logo_path):
+            # Bigger logo
+            logo_width = 73*mm
+            logo_height = 58*mm
+            c.drawImage(logo_path, 22*mm, y - logo_height + 5*mm, 
+                       width=logo_width, height=logo_height, 
+                       preserveAspectRatio=True, mask='auto')
+        else:
+            # Fallback text logo
+            c.setFont("Helvetica-Bold", 60)
+            c.setFillColor(colors.HexColor('#E54C37'))
+            c.drawString(25*mm, y - 25*mm, "DKM")
+            c.setFillColor(colors.black)
+    except Exception as e:
+        logging.error(f"Error loading logo: {str(e)}")
+        c.setFont("Helvetica-Bold", 60)
+        c.setFillColor(colors.HexColor('#E54C37'))
+        c.drawString(25*mm, y - 25*mm, "DKM")
+        c.setFillColor(colors.black)
+    
+    # COMPANY ADDRESS (right side of logo)
+    x_address = 110*mm 
+    y_address = y - 20*mm
+    
+    c.setFont("Helvetica-Bold", 11)
+    c.setFillColor(colors.black)
+    c.drawString(x_address, y_address, data.client.fullName.upper())
+    
+    c.setFont("Helvetica", 10)
+    y_address -= 12
+    c.drawString(x_address, y_address, data.client.straat_en_nummer.upper())
+    
+    y_address -= 11
+    c.drawString(x_address, y_address, f"{data.client.landcode} {data.client.postcode} {data.client.stad.upper()}")
+    
+    y_address -= 11
+    c.drawString(x_address, y_address, f"{data.client.landcode}{data.client.plda_operatoridentity}")
+    
+    y_address -= 15
+    if data.email is not None and data.email.strip() != "":
+        c.drawString(x_address, y_address, f"mail: {data.email}")
+    
+    # Tighter spacing
+    y = start_y - 58*mm
+    return y
+
+def parse_referentie_klant(ref_text: str):
+    """
+    Parse REFERENTIE_KLANT text and extract:
+        - Invoice
+        - Commercial reference
+        - From
+        - As per attached copy
+        - Date (Datum)
+    Always returns 5 keys, even if some are missing.
+    """
+    
+    # Clean and normalize
+    text = ref_text.replace('\r', '').strip()
+
+    # Extract each section using regex (non-greedy, up to next known label)
+    invoice_match = re.search(r"Invoice:\s*(.*?)(?=\s*Commercial reference:|$)", text, re.DOTALL | re.IGNORECASE)
+    commercial_match = re.search(r"Commercial reference:\s*(.*?)(?=\s*From:|As per attached copy:|Datum:|$)", text, re.DOTALL | re.IGNORECASE)
+    from_match = re.search(r"From:\s*(.*?)(?=\s*As per attached copy:|Datum:|$)", text, re.DOTALL | re.IGNORECASE)
+    attached_match = re.search(r"As per attached copy:\s*(.*?)(?=\s*Datum:|$)", text, re.DOTALL | re.IGNORECASE)
+    date_match = re.search(r"Datum:\s*(.*)", text, re.IGNORECASE)
+
+    # Helper to clean captured text
+    def clean(value):
+        return value.strip() if value else ""
+
+    components = {
+        'invoice': clean(invoice_match.group(1) if invoice_match else ""),
+        'commercial_ref': clean(commercial_match.group(1) if commercial_match else ""),
+        'From': clean(from_match.group(1) if from_match else ""),
+        'As per attached copy': clean(attached_match.group(1) if attached_match else ""),
+        'date': clean(date_match.group(1) if date_match else "")
+    }
+
+    return components
+
+def draw_document_info_clean(c, data, y: float, width: float) -> float:
+    """Draw document information in aligned label layout with field names for each REFERENCE line.
+       Skips lines with empty or null values.
+    """
+
+    ref_components = parse_referentie_klant(data.referentie_klant)
+
+    label_x = 23 * mm
+    text_x = 70 * mm
+    right_margin = width - 5 * mm
+    line_gap = 12
+    font_name = "Helvetica"
+    font_size = 9
+
+    c.setFont(font_name, font_size)
+    c.setFillColor(colors.black)
+
+    # --- VATNOTE ---
+    vatnote_text = f"{data.processfactuurnummer} {data.datum}"
+    c.drawString(label_x, y, "VATNOTE:")
+    c.drawString(text_x, y, vatnote_text)
+    y -= line_gap
+
+    # --- FILENUMBER ---
+    file_text = f"{data.commercialreference} ----ID:{data.c88nummer}-----"
+    c.drawString(label_x, y, "FILENUMBER:")
+    c.drawString(text_x, y, file_text)
+    y -= line_gap
+
+    # --- REFERENCE ---
+    c.drawString(label_x, y, "REFERENCE:")
+
+    # Field mapping (label → parse_referentie_klant key)
+    field_labels = [
+        ("Invoice:", "invoice"),
+        ("Commercial reference:", "commercial_ref"),
+        ("From:", "From"),
+        ("As per attached copy:", "As per attached copy"),
+        ("Date:", "date"),
+    ]
+
+    # Draw each field only if value is not empty
+    for label, key in field_labels:
+        value = (ref_components.get(key) or "").strip()
+        if not value:
+            continue  # Skip this line entirely
+
+        full_text = f"{label} {value}".strip()
+        words = full_text.split()
+        current_line = ""
+
+        for word in words:
+            test_line = f"{current_line} {word}".strip()
+            line_width = stringWidth(test_line, font_name, font_size)
+            if text_x + line_width > right_margin:
+                c.drawString(text_x, y, current_line)
+                y -= line_gap
+                current_line = word
+            else:
+                current_line = test_line
+
+        if current_line:
+            c.drawString(text_x, y, current_line)
+            y -= line_gap
+
+    return y - 3
+
+def wrap_description(text: str, max_width: float, font_name: str, font_size: int) -> list:
+    """
+    Wrap description text to fit within column width
+    Returns list of lines that fit within max_width
+    """
+    words = text.split()
+    lines = []
+    current_line = ""
+    
+    for word in words:
+        test_line = f"{current_line} {word}".strip() if current_line else word
+        line_width = stringWidth(test_line, font_name, font_size)
+        
+        if line_width <= max_width:
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+                current_line = word
+            else:
+                # Single word too long, truncate it
+                lines.append(word[:30] + "...")
+                current_line = ""
+    
+    if current_line:
+        lines.append(current_line)
+    
+    return lines
+
+def draw_professional_table(c: canvas.Canvas, items: list, y: float, width: float, height: float, data: DebenoteData, page_number: int) -> tuple:
+    """Draw professional modern table for line items with pagination and text wrapping"""
+    
+    if not items:
+        return y, page_number
+    
+    # Table appearance
+    header_height = 20
+    base_row_height = 18
+    min_row_height = 18
+    x_shift = 2 * mm
+    font_name = "Helvetica"
+    font_size = 8
+    
+    # Column definitions
+    col_code = (25*mm) + x_shift
+    col_desc = (45*mm) + x_shift
+    col_qty = (100*mm) + x_shift
+    col_weight = (120*mm) + x_shift
+    col_stat = (143*mm) + x_shift
+    col_value = (170*mm) + x_shift
+    
+    # Description column max width (from col_desc to col_qty)
+    desc_max_width = col_qty - col_desc - 3*mm
+    
+    # Minimum Y position before footer (leave space for footer)
+    min_y = 110 * mm
+    
+    # Draw header
+    def draw_table_header(canvas, y_pos):
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#E54C37"))
+        canvas.rect((20*mm) + x_shift, y_pos - header_height, (width - 40*mm), header_height, fill=True, stroke=False)
+        canvas.setStrokeColor(colors.HexColor('#E54C37'))
+        canvas.setLineWidth(0.5)
+        canvas.rect((20*mm) + x_shift, y_pos - header_height, (width - 40*mm), header_height, fill=False, stroke=True)
+        canvas.restoreState()
+        
+        canvas.setFillColor(colors.HexColor('#333333'))
+        canvas.setFont("Helvetica-Bold", 9)
+        
+        header_y = y_pos - 13
+        canvas.drawString(col_code, header_y, "CODE")
+        canvas.drawString(col_desc, header_y, "DESCRIPTION")
+        canvas.drawString(col_qty, header_y, "QTY")
+        canvas.drawString(col_weight, header_y, "NET WEIGHT")
+        canvas.drawString(col_stat, header_y, "STAT UNIT")
+        canvas.drawString(col_value, header_y, "VALUE")
+        
+        return y_pos - header_height
+    
+    # Draw initial header
+    y = draw_table_header(c, y)
+    c.setFont(font_name, font_size)
+    
+    # Draw table rows
+    for i, item in enumerate(items):
+        # Wrap description text
+        desc_lines = wrap_description(
+            item.goederenomschrijving.upper(), 
+            desc_max_width, 
+            font_name, 
+            font_size
+        )
+        
+        # Limit to 3 lines max
+        desc_lines = desc_lines[:3]
+        
+        # Calculate row height based on description lines
+        row_height = max(min_row_height, len(desc_lines) * 10 + 8)
+        
+        # Check if we need a new page
+        if y - row_height < min_y:
+            # Draw page number
+            draw_page_number(c, page_number, width, height)
+            
+            # New page
+            c.showPage()
+            page_number += 1
+            
+            # Reset position and redraw header
+            y = height - 25*mm
+            y = draw_table_header(c, y)
+            c.setFont(font_name, font_size)
+        
+        # Draw row background
+        if i % 2 == 0:
+            c.saveState()
+            c.setFillColor(colors.HexColor('#FAFAFA'))
+            c.rect((20*mm) + x_shift, y - row_height, (width - 40*mm), row_height, fill=True, stroke=False)
+            c.restoreState()
+        
+        # Draw row border
+        c.setStrokeColor(colors.HexColor('#E0E0E0'))
+        c.setLineWidth(0.3)
+        c.rect((20*mm) + x_shift, y - row_height, (width - 40*mm), row_height, fill=False, stroke=True)
+        
+        # Starting Y for text (top of row minus padding)
+        row_y = y - 12
+        c.setFillColor(colors.black)
+        
+        # Code
+        c.drawString(col_code, row_y, item.goederencode[:12])
+        
+        # Description (multi-line)
+        for line_idx, desc_line in enumerate(desc_lines):
+            c.drawString(col_desc, row_y - (line_idx * 10), desc_line)
+        
+        # Quantity (centered vertically in row)
+        unit = item.typepackages
+        c.drawString(col_qty, row_y, f"{int(item.aantal_gewicht)} {unit}")
+        
+        # Net Weight
+        c.drawString(col_weight, row_y, f"{item.netmass:,.2f}")
+        
+        # Stat Unit
+        c.drawString(col_stat, row_y, f"{item.supplementaryunits:.2f}")
+        
+        # Value
+        c.setFont("Helvetica-Bold", font_size)
+        c.drawString(col_value, row_y, f"{item.verkoopwaarde:,.2f}")
+        c.setFont(font_name, font_size)
+        
+        y -= row_height
+    
+    y -= 15  # Reduced spacing after table
+    return y, page_number
+
+def draw_totals_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: float, height: float) -> float:
+    """Draw totals section in clean professional style"""
+    
+    # Check if we have enough space for totals section
+    min_y_for_totals = 110 * mm
+    
+    if y < min_y_for_totals + 100:  # Need ~100mm for totals + footer
+        # Not enough space, this will be handled by footer positioning
+        pass
+    
+    y -= 5
+    
+    c.setFont("Helvetica-Bold", 11)
+    c.setFillColor(colors.black)
+    c.drawString(23*mm, y, "FOR THE TOTAL AMOUNT OF:")
+    
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(width - 55*mm, y, f"{data.factuurtotaal:,.2f} {data.munt}")
+    
+    y -= 13
+    
+    c.setFont("Helvetica", 9)
+    c.setFillColor(colors.HexColor('#444444'))
+    c.drawString(23*mm, y, f"say {data.amount_in_words}")
+    
+    y -= 25
+    
+    # VAT Information
+    c.setFont("Helvetica", 9)
+    c.setFillColor(colors.black)
+    c.drawString(23*mm, y, "exempt from VAT, art 39bis")
+    y -= 13
+    
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(23*mm, y, "INVOICE TO BE PAID DIRECTLY THE SUPPLIER")
+    y -= 11
+    
+    c.drawString(23*mm, y, "VAT TO BE PAID BY THE RECEIVER OF THE SERVICES")
+    y -= 15
+    
+    # Legal text
+    c.setFont("Helvetica", 8)
+    c.setFillColor(colors.HexColor('#555555'))
+    legal_text = get_legal_text(data.client.language)
+    wrapped_lines = wrap_text(legal_text, 110)
+    for line in wrapped_lines[:2]:
+        c.drawString(23*mm, y, line)
+        y -= 9
+    
+    y -= 8
+    c.drawString(23*mm, y, "Importdocument :")
+    y -= 20
+    
+    return y
+
+def draw_footer_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: float, height: float):
+    """Draw clean professional footer - dynamically positioned based on content.
+       This version uses the 'relatie' information instead of 'client'.
+    """
+    
+    # Minimum safe footer Y position
+    min_footer_y = 70 * mm
+    if y < min_footer_y:
+        y = min_footer_y
+    
+    # Header text in footer
+    c.setFont("Helvetica-Bold", 9)
+    c.setFillColor(colors.black)
+    c.drawString(23 * mm, y, "DKM-CUSTOMS IS FISCAL REPRESENTATIVE FOR:")
+    y -= 10
+
+    # Draw relatie info (formerly client info)
+    c.setFont("Helvetica", 9)
+    c.drawString(23 * mm, y, data.relatie.fullName.upper())
+    y -= 9
+    c.drawString(23 * mm, y, data.relatie.straat_en_nummer.upper())
+    y -= 9
+    c.drawString(
+        23 * mm,
+        y,
+        f"{data.relatie.landcode} {data.relatie.postcode} {data.relatie.stad.upper()}"
+    )
+    y -= 9
+    
+    c.drawString(
+        23 * mm,
+        y,
+        f"{data.relatie.landcode}{data.relatie.plda_operatoridentity}"
+    )
+    y -= 9
+
+    # Map country codes to names for readability
+    country_names = {
+        "FR": "FRANCE", "NL": "NETHERLAND", "DE": "GERMANY",
+        "PT": "PORTUGAL", "SK": "SLOVAKIA", "BE": "BELGIUM",
+        "ES": "SPAIN", "IT": "ITALY", "PL": "POLAND", "AT": "AUSTRIA"
+    }
+    country = country_names.get(data.relatie.landcode, data.relatie.landcode)
+    c.drawString(23 * mm, y, country)
+    y -= 9
+
+    # Draw VAT number (same as before)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(23 * mm, y, f"FISCAL VAT NUMBER {data.btwnummer}")
+
+def draw_page_number(c: canvas.Canvas, page_num: int, width: float, height: float):
+    """Draw page number at bottom-right"""
+    c.setFont("Helvetica", 8)
+    c.setFillColor(colors.HexColor('#888888'))
+    c.drawRightString(width - 20*mm, 15*mm, f"Page {page_num}")
+
+def wrap_text(text: str, max_chars: int) -> list:
+    """Wrap text to max characters per line"""
+    words = text.split()
+    lines = []
+    current_line = ""
+    
+    for word in words:
+        test_line = f"{current_line} {word}".strip()
+        if len(test_line) <= max_chars:
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    
+    if current_line:
+        lines.append(current_line)
+    
+    return lines
+
+============================================================
+FILE: services/state_manager.py
+============================================================
+import json
+import logging
+import os
+from datetime import datetime
+from azure.storage.blob import BlobServiceClient
+from typing import List
+
+CONTAINER_NAME = "document-intelligence"
+FOLDER_NAME = "Fiscal-Representation"
+STATE_BLOB_NAME = "fiscdebet_state.json"
+
+def get_blob_client():
+    """Get blob storage client"""
+    connect_str = os.getenv("AzureWebJobsStorage")
+    if not connect_str:
+        raise ValueError("Missing Azure storage connection string")
+    
+    blob_service = BlobServiceClient.from_connection_string(connect_str)
+    container = blob_service.get_container_client(CONTAINER_NAME)
+    return container
+
+
+def get_max_id(rows: List[dict]) -> int:
+    """
+    Find maximum INTERNFACTUURNUMMER in batch
+    
+    Args:
+        rows: List of SQL row dictionaries
+        
+    Returns:
+        Maximum INTERNFACTUURNUMMER
+    """
+    if not rows:
+        return 0
+    
+    return max([row.get("INTERNFACTUURNUMMER", 0) for row in rows])
+
+
+def update_state(max_id: int, count: int):
+    """
+    Update fiscdebet_state.json in blob storage
+    
+    Args:
+        max_id: Maximum INTERNFACTUURNUMMER processed
+        count: Number of records processed
+    """
+    try:
+        container = get_blob_client()
+        blob_path = f"{FOLDER_NAME}/{STATE_BLOB_NAME}"
+        blob_client = container.get_blob_client(blob_path)
+        
+        # Load existing state or create new
+        try:
+            download = blob_client.download_blob().readall()
+            state = json.loads(download)
+        except:
+            state = {"lastProcessedId": 0}
+        
+        # Update state
+        state["lastProcessedId"] = max(max_id, state.get("lastProcessedId", 0))
+        state["lastRun"] = datetime.utcnow().isoformat() + "Z"
+        state["recordsProcessed"] = count
+        
+        # Save state
+        blob_client.upload_blob(json.dumps(state, indent=2), overwrite=True)
+        logging.info(f"✅ Updated state: lastProcessedId = {state['lastProcessedId']}")
+        
+    except Exception as e:
+        logging.error(f"❌ Failed to update state: {str(e)}")
+        # Don't raise - state update is not critical
+
+============================================================
+FILE: templates/legal_texts.py
+============================================================
+def get_legal_text(language: str) -> str:
+    """
+    Get VAT exemption legal text based on language
+    Matches exact text from sample PDFs
+    
+    Args:
+        language: Language code (EN, NL, DE, FR)
+        
+    Returns:
+        Legal text in specified language
+    """
+    
+    texts = {
+        "NL": (
+            "Intra-communautaire levering: vrijstelling van BTW overeenkomstig art. 39bis, 1° van het WBTW / "
+            "Vrij van BTW: art 138 lid 1 van Eur. BTW richtlijn 2006/112/EC"
+        ),
+        "DE": (
+            "Innergem.Lieferung: befreit vom Umsatzsteuer: art.39bis, 1° des Belg. Umsatzsteuergesetz / "
+            "Befreit vom Umsatzsteuer: art 138 lid 1 des Eur. VAT Council directive 2006/112/EC"
+        ),
+        "FR": (
+            "Livraison intracommunautaire: exonération de la TVA conformément à l'art. 39bis, 1° de la WBTW / "
+            "Hors TVA: art 138 alinea 1 de la Eur. Directive TVA 2006/112/EC"
+        ),
+        "EN": (
+            "Intra-Community supply: exemption from VAT in accordance with art. 39bis, 1° of the WBTW / "
+            "Free of VAT: art 138 lid 1 from Eur. VAT Council directive 2006/112/EC"
+        )
+    }
+    
+    return texts.get(language.upper(), texts["EN"])
+
+============================================================
+FILE: templates/pdf_layout.py
+============================================================
+from reportlab.lib.units import mm
+
+# Page margins
+MARGIN_LEFT = 30 * mm
+MARGIN_RIGHT = 30 * mm
+MARGIN_TOP = 40 * mm
+MARGIN_BOTTOM = 40 * mm
+
+# Font sizes
+FONT_SIZE_TITLE = 14
+FONT_SIZE_HEADER = 10
+FONT_SIZE_BODY = 9
+FONT_SIZE_SMALL = 8
+
+# Spacing
+LINE_SPACING = 12
+SECTION_SPACING = 40
+
+# Table column widths
+COL_WIDTH_CODE = 30 * mm
+COL_WIDTH_DESC = 60 * mm
+COL_WIDTH_QTY = 20 * mm
+COL_WIDTH_NW = 20 * mm
+COL_WIDTH_STAT = 20 * mm
+COL_WIDTH_VALUE = 25 * mm
+
+============================================================
+FILE: __init__.py
+============================================================
+import logging
+import azure.functions as func
+import json
+from datetime import datetime
+from typing import List
+
+from .services.data_transformer import transform_row
+from .services.pdf_generator import generate_pdf
+from .services.state_manager import update_state, get_max_id
+from .models.response_model import APIResponse, PDFResponse
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Main HTTP handler for debenote PDF generation
+    Receives SQL data from Logic App, generates PDFs, returns base64 encoded PDFs
+    """
+    logging.info("DebenoteGenerator function triggered")
+    
+    if req.method != "POST":
+        return func.HttpResponse(
+            json.dumps({"success": False, "error": "Method not allowed"}),
+            status_code=405,
+            mimetype="application/json"
+        )
+    
+    try:
+        # 1. Parse request body
+        body = req.get_json()
+        rows = body.get("Table1", [])
+        
+        if not rows:
+            logging.info("No data received from Logic App")
+            return func.HttpResponse(
+                json.dumps({
+                    "success": True,
+                    "message": "No new data to process",
+                    "processed_count": 0,
+                    "pdfs": []
+                }),
+                status_code=200,
+                mimetype="application/json"
+            )
+        
+        logging.info(f"Received {len(rows)} records from Logic App")
+        
+        # 2. Process each row
+        pdfs = []
+        errors = []
+        
+        for row in rows:
+            try:
+                # Transform SQL row to DebenoteData object
+                debenote_data = transform_row(row)
+                
+                # Generate PDF
+                pdf_bytes = generate_pdf(debenote_data)
+                
+                # Convert to base64
+                import base64
+                pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                
+                # Build filename
+                filename = f"{debenote_data.internfactuurnummer}E-{debenote_data.btwnummer}-{row['DATUM']}.pdf"
+                
+                # Create PDF response object
+                pdf_response = PDFResponse(
+                    internfactuurnummer=debenote_data.internfactuurnummer,
+                    filename=filename,
+                    pdf_base64=pdf_base64,
+                    size_bytes=len(pdf_bytes),
+                    metadata={
+                        "btw_nummer": debenote_data.btwnummer,
+                        "klant": debenote_data.client.naam,
+                        "leverancier": debenote_data.leverancier_naam,
+                        "datum": debenote_data.datum,
+                        "bedrag": debenote_data.factuurtotaal,
+                        "munt": debenote_data.munt,
+                        "c88": debenote_data.c88nummer,
+                        "commercialreference": debenote_data.commercialreference
+                    }
+                )
+                
+                pdfs.append(pdf_response)
+                logging.info(f"✅ Generated PDF for INTERNFACTUURNUMMER: {debenote_data.internfactuurnummer}")
+                
+            except Exception as e:
+                error_msg = f"Failed to process INTERNFACTUURNUMMER {row.get('INTERNFACTUURNUMMER', 'unknown')}: {str(e)}"
+                logging.error(error_msg)
+                errors.append({
+                    "internfactuurnummer": row.get('INTERNFACTUURNUMMER'),
+                    "error": str(e)
+                })
+        
+        # 3. Update state with max processed ID
+        if pdfs:
+            max_id = get_max_id(rows)
+            update_state(max_id, len(pdfs))
+            logging.info(f"Updated state: lastProcessedId = {max_id}")
+        
+        # 4. Build response
+        response = APIResponse(
+            success=True,
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            processed_count=len(pdfs),
+            last_processed_id=get_max_id(rows) if pdfs else 0,
+            pdfs=[pdf.__dict__ for pdf in pdfs],
+            errors=errors
+        )
+        
+        logging.info(f"✅ Successfully processed {len(pdfs)} debenotes, {len(errors)} errors")
+        
+        return func.HttpResponse(
+            json.dumps(response.__dict__),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f"❌ Critical error in DebenoteGenerator: {str(e)}")
+        return func.HttpResponse(
+            json.dumps({
+                "success": False,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "error": str(e),
+                "processed_count": 0,
+                "pdfs": []
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+============================================================
+FILE: function.json
+============================================================
+{
+    "bindings": [
+        {
+            "authLevel": "function",
+            "type": "httpTrigger",
+            "direction": "in",
+            "name": "req",
+            "methods": ["get", "post", "delete"]
+        },
+        {
+            "type": "http",
+            "direction": "out",
+            "name": "$return"
+        }
+    ]
+}

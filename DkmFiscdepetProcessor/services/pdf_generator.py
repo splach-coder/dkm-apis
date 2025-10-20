@@ -266,14 +266,14 @@ def draw_professional_table(c: canvas.Canvas, items: list, y: float, width: floa
     # Draw header
     def draw_table_header(canvas, y_pos):
         canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#E54C37"))
+        canvas.setFillColor(colors.HexColor("#F35E40"))
         canvas.rect((20*mm) + x_shift, y_pos - header_height, (width - 40*mm), header_height, fill=True, stroke=False)
-        canvas.setStrokeColor(colors.HexColor('#E54C37'))
+        canvas.setStrokeColor(colors.HexColor('#F35E40'))
         canvas.setLineWidth(0.5)
         canvas.rect((20*mm) + x_shift, y_pos - header_height, (width - 40*mm), header_height, fill=False, stroke=True)
         canvas.restoreState()
         
-        canvas.setFillColor(colors.HexColor('#333333'))
+        canvas.setFillColor(colors.HexColor('#ffffff'))
         canvas.setFont("Helvetica-Bold", 9)
         
         header_y = y_pos - 13
@@ -391,11 +391,6 @@ def draw_totals_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
     y -= 25
     
     # VAT Information
-    c.setFont("Helvetica", 9)
-    c.setFillColor(colors.black)
-    c.drawString(23*mm, y, "exempt from VAT, art 39bis")
-    y -= 13
-    
     c.setFont("Helvetica-Bold", 9)
     c.drawString(23*mm, y, "INVOICE TO BE PAID DIRECTLY THE SUPPLIER")
     y -= 11
@@ -412,8 +407,6 @@ def draw_totals_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
         c.drawString(23*mm, y, line)
         y -= 9
     
-    y -= 8
-    c.drawString(23*mm, y, "Importdocument :")
     y -= 20
     
     return y
@@ -431,7 +424,7 @@ def draw_footer_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
     # Header text in footer
     c.setFont("Helvetica-Bold", 9)
     c.setFillColor(colors.black)
-    c.drawString(23 * mm, y, "DKM-CUSTOMS IS FISCAL REPRESENTATIVE FOR:")
+    c.drawString(23 * mm, y, "DKM-CUSTOMS IS FISCAL REPRESENTATIVE UNDER GLOBAL VAT NUMBER FOR:")
     y -= 10
 
     # Draw relatie info (formerly client info)
@@ -466,7 +459,7 @@ def draw_footer_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
 
     # Draw VAT number (same as before)
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(23 * mm, y, f"FISCAL VAT NUMBER {data.btwnummer}")
+    c.drawString(23 * mm, y, f"FISCAL VAT NUMBER BE0{data.btwnummer}")
 
 def draw_page_number(c: canvas.Canvas, page_num: int, width: float, height: float):
     """Draw page number at bottom-right"""

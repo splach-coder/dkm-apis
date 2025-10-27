@@ -79,7 +79,7 @@ def transform_row(row: dict) -> DebenoteData:
             c88nummer=row['C88NUMMER'],
             client=client,
             relatie=relatie,
-            email=row.get('NAME', ''),
+            email=row.get('CONTACT_NAME', ''),
             relatiecode_leverancier=row['RELATIECODE_LEVERANCIER'],
             leverancier_naam=row['LEVERANCIERSNAAM'],
             line_items=line_items,

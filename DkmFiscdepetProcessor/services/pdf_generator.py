@@ -1,3 +1,4 @@
+import json
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
@@ -26,8 +27,6 @@ def generate_pdf(data: DebenoteData) -> bytes:
         # Start higher for tighter layout
         y_position = height - 25*mm
         page_number = 1
-        
-        logging.error(f"Generating PDF for DebenoteData: {data}")
         
         # Draw sections with clean professional layout
         y_position = draw_header_clean(c, data, y_position, width)

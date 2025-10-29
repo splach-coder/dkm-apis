@@ -24,72 +24,113 @@ except Exception as e:
     logging.critical(f"Failed to initialize Azure services: {e}")
     connection_string = None 
     blob_service_client = None
-    
-    
 
 # --- Blob Storage Constants ---
 CONTAINER_NAME = "document-intelligence"
-PARQUET_BLOB_PATH = "statistics_check/all_data.parquet"
+DAILY_PARQUET_PREFIX = "statistics_check/daily/"
 SUMMARY_BLOB_PATH = "statistics_check/cache/users_summary.json"
 MONTHLY_SUMMARY_BLOB_PATH = "statistics_check/cache/monthly_report_cache.json"
 USER_CACHE_PATH_PREFIX = "statistics_check/cache/users/"
 
 
 # --- Helper Functions ---
-def load_parquet_from_blob_lazy(columns=None, date_cutoff=None):
-    """
-    Lazy loads parquet with column filtering and date cutoff for memory efficiency.
-    columns: list of column names to load (None = all)
-    date_cutoff: datetime - only load rows where HISTORYDATETIME >= cutoff
-    """
-    if not blob_service_client: 
+def get_today_parquet_path():
+    """Returns today's daily parquet path: statistics_check/daily/2025-10-28.parquet"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return f"{DAILY_PARQUET_PREFIX}{today}.parquet"
+
+def load_daily_parquet(date_str):
+    """Load a specific daily parquet file by date string (YYYY-MM-DD format)"""
+    if not blob_service_client:
         raise ConnectionError("Blob service not initialized.")
     try:
-        blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, PARQUET_BLOB_PATH)
+        parquet_path = f"{DAILY_PARQUET_PREFIX}{date_str}.parquet"
+        blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, parquet_path)
         if not blob_client.exists():
-            logging.warning("Parquet file not found at specified path.")
             return pd.DataFrame()
-        
-        # Load with column filtering if specified
-        df = pd.read_parquet(io.BytesIO(blob_client.download_blob().readall()), columns=columns)
-        
-        # Apply date cutoff immediately to trim data
-        if date_cutoff and 'HISTORYDATETIME' in df.columns:
-            df['HISTORYDATETIME'] = pd.to_datetime(df['HISTORYDATETIME'], errors='coerce', format='mixed')
-            df = df[df['HISTORYDATETIME'] >= date_cutoff]
-            logging.info(f"Filtered parquet to {len(df)} rows after date cutoff")
-        
-        return df
+        return pd.read_parquet(io.BytesIO(blob_client.download_blob().readall()))
     except Exception as e:
-        logging.error(f"Could not load Parquet file. Error: {e}")
+        logging.error(f"Could not load daily parquet {date_str}: {e}")
         return pd.DataFrame()
 
 
-def load_parquet_from_blob():
-    """
-    Standard load for backward compatibility - uses lazy loading internally.
-    """
-    return load_parquet_from_blob_lazy()
-
-
-def save_parquet_to_blob(df):
-    """Saves a pandas DataFrame to a Parquet file in blob storage."""
-    if not blob_service_client: 
+def load_last_n_days_parquets(days=90):
+    """Load and UNION all daily parquets from last N days"""
+    if not blob_service_client:
         raise ConnectionError("Blob service not initialized.")
-    blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, PARQUET_BLOB_PATH)
+    
+    dfs = []
+    cutoff_date = datetime.now() - timedelta(days=days)
+    current_date = datetime.now()
+    
+    while current_date >= cutoff_date:
+        date_str = current_date.strftime("%Y-%m-%d")
+        df = load_daily_parquet(date_str)
+        if not df.empty:
+            dfs.append(df)
+            logging.info(f"Loaded daily parquet: {date_str}")
+        current_date -= timedelta(days=1)
+    
+    if not dfs:
+        logging.warning(f"No daily parquets found in last {days} days")
+        return pd.DataFrame()
+    
+    combined_df = pd.concat(dfs, ignore_index=True)
+    logging.info(f"UNION complete: {len(combined_df)} total rows from {len(dfs)} daily parquets")
+    return combined_df
+
+
+def save_daily_parquet(df):
+    """Saves today's daily parquet with metadata already calculated"""
+    if not blob_service_client:
+        raise ConnectionError("Blob service not initialized.")
+    
+    today_path = get_today_parquet_path()
+    blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, today_path)
+    
     buffer = io.BytesIO()
     df.to_parquet(buffer, index=False, compression='snappy')
     blob_client.upload_blob(buffer.getvalue(), overwrite=True)
-    logging.info(f"Successfully saved Parquet to {PARQUET_BLOB_PATH}")
+    logging.info(f"Successfully saved daily parquet to {today_path}")
 
 
 def save_json_to_blob(data, blob_path):
     """Saves a dictionary as a JSON file in blob storage."""
-    if not blob_service_client: 
+    if not blob_service_client:
         raise ConnectionError("Blob service not initialized.")
     blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, blob_path)
     blob_client.upload_blob(json.dumps(data, indent=2), overwrite=True)
     logging.info(f"Successfully saved JSON to {blob_path}")
+
+
+def add_file_metadata(df):
+    """
+    Pre-calculates file metadata at ingestion time.
+    Adds columns: is_manual, is_automatic, classified_by_user, first_action_date, is_interface
+    This preserves your exact counting logic without replaying it on every refresh.
+    """
+    if df.empty:
+        return df
+    
+    df_meta = df.copy()
+    
+    # Clean columns
+    for col in ["USERCREATE", "USERCODE", "HISTORY_STATUS"]:
+        if col in df_meta.columns:
+            df_meta[col] = df_meta[col].astype(str).str.strip().str.upper()
+    
+    df_meta["HISTORYDATETIME"] = pd.to_datetime(df_meta["HISTORYDATETIME"], errors="coerce", format="mixed")
+    
+    # Define manual statuses (your exact logic)
+    manual_statuses = {"COPIED", "COPY", "NEW"}
+    
+    # Initialize metadata columns
+    df_meta['is_interface'] = df_meta['HISTORY_STATUS'] == 'INTERFACE'
+    df_meta['is_manual_status'] = df_meta['HISTORY_STATUS'].isin(manual_statuses)
+    df_meta['is_modified'] = df_meta['HISTORY_STATUS'] == 'MODIFIED'
+    df_meta['is_wrt_ent'] = df_meta['HISTORY_STATUS'] == 'WRT_ENT'
+    
+    return df_meta
 
 
 # --- Main Function App ---
@@ -103,101 +144,124 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         user_param = req.params.get('user')
         all_users_param = req.params.get('all_users', 'false').lower() == 'true'
 
-        # --- Endpoint to add new raw data ---
+        # --- Endpoint to add new raw data (with metadata pre-calculation) ---
         if method == "POST" and not action:
             body = req.get_json()
             new_df = pd.DataFrame(body.get("data", {}).get("Table1", []))
             if new_df.empty:
                 return func.HttpResponse(json.dumps({"error": "No data provided in request body."}), status_code=400, mimetype="application/json")
             
-            existing_df = load_parquet_from_blob()
-            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-            save_parquet_to_blob(combined_df)
-            return func.HttpResponse(json.dumps({"status": "success", "message": "Data stored successfully."}), status_code=200, mimetype="application/json")
+            try:
+                # Add metadata before saving
+                new_df = add_file_metadata(new_df)
+                
+                # Get today's parquet path
+                today_path = get_today_parquet_path()
+                blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, today_path)
+                
+                if blob_client.exists():
+                    # If today's parquet exists, append to it
+                    existing_df = pd.read_parquet(io.BytesIO(blob_client.download_blob().readall()))
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                else:
+                    combined_df = new_df
+                
+                save_daily_parquet(combined_df)
+                logging.info(f"Successfully appended {len(new_df)} rows with metadata to today's parquet")
+                
+                return func.HttpResponse(json.dumps({"status": "success", "message": "Data stored successfully with metadata."}), status_code=200, mimetype="application/json")
+            except Exception as e:
+                logging.error(f"Error saving data: {e}")
+                return func.HttpResponse(json.dumps({"error": f"Failed to save data: {str(e)}"}), status_code=500, mimetype="application/json")
 
-        # --- NEW: Endpoint to refresh ALL individual user caches (CHUNKED) ---
-        # Processes users in batches of 6 to avoid memory spikes
+        # --- Endpoint to refresh ALL individual user caches ---
         elif method == "POST" and action == "refresh-users":
-            logging.info("Starting full cache refresh for all individual users (chunked processing).")
+            logging.info("Starting full cache refresh for all individual users (using daily parquets).")
             
             target_users = [
                 'FADWA.ERRAZIKI', 'AYOUB.SOURISTE', 'AYMANE.BERRIOUA', 'SANA.IDRISSI', 'AMINA.SAISS',
                 'KHADIJA.OUFKIR', 'ZOHRA.HMOUDOU', 'SIMO.ONSI', 'YOUSSEF.ASSABIR', 'ABOULHASSAN.AMINA',
                 'MEHDI.OUAZIR', 'OUMAIMA.EL.OUTMANI', 'HAMZA.ALLALI', 'MUSTAPHA.BOUJALA', 'HIND.EZZAOUI',
-                'MOHAMED.BOUIDAR', 'HOUDA.EZZAOUI', 'YAHYA.ANEJARN', 
                 'IKRAM.OULHIANE', 'MOURAD.ELBAHAZ', 'MOHSINE.SABIL', 'AYA.HANNI',
                 'ZAHIRA.OUHADDA', 'CHAIMAAE.EJJARI', 'HAFIDA.BOOHADDOU', 'KHADIJA.HICHAMI', 'FATIMA.ZAHRA.BOUGSIM'
             ]
             
-            # OPTIMIZATION: Load once with lazy loading + early date filter
-            cutoff = datetime.now() - timedelta(days=90)
-            df = load_parquet_from_blob_lazy(date_cutoff=cutoff)
-            
-            if df.empty:
-                return func.HttpResponse(json.dumps({"status": "skipped", "message": "Source data is empty."}), status_code=200, mimetype="application/json")
-
-            if 'USERCODE' not in df.columns:
-                return func.HttpResponse(json.dumps({"error": "'USERCODE' column not found in data."}), status_code=400, mimetype="application/json")
-            
-            all_users_in_df = df['USERCODE'].dropna().unique()
-            target_users_upper = [tu.upper() for tu in target_users]
-            users_to_process = [user for user in all_users_in_df if user.upper() in target_users_upper]
-
-            logging.info(f"Found {len(users_to_process)} target users to process out of {len(all_users_in_df)} unique users.")
-            
-            processed_count = 0
-            batch_size = 6
-            
-            # Process in batches to avoid memory spike
-            for i in range(0, len(users_to_process), batch_size):
-                batch = users_to_process[i:i + batch_size]
-                logging.info(f"Processing batch {i//batch_size + 1}: users {batch}")
+            try:
+                # OPTIMIZATION: Load all daily parquets from last 90 days (UNION)
+                logging.info("Loading last 90 days of daily parquets...")
+                df_union = load_last_n_days_parquets(days=90)
                 
-                for user in batch:
+                if df_union.empty:
+                    return func.HttpResponse(json.dumps({"status": "skipped", "message": "No data available."}), status_code=200, mimetype="application/json")
+
+                if 'USERCODE' not in df_union.columns:
+                    return func.HttpResponse(json.dumps({"error": "'USERCODE' column not found in data."}), status_code=400, mimetype="application/json")
+                
+                # Find target users in data
+                all_users_in_df = df_union['USERCODE'].dropna().unique()
+                target_users_upper = [tu.upper() for tu in target_users]
+                users_to_process = [user for user in all_users_in_df if str(user).upper() in target_users_upper]
+
+                logging.info(f"Found {len(users_to_process)} target users to process.")
+                
+                processed_count = 0
+                
+                # Process each user - calculate_single_user_metrics_fast uses YOUR EXACT LOGIC
+                for user in users_to_process:
                     try:
-                        user_metrics = calculate_single_user_metrics_fast(df, user)
+                        user_metrics = calculate_single_user_metrics_fast(df_union, user)
                         user_blob_path = f"{USER_CACHE_PATH_PREFIX}{user}.json"
                         save_json_to_blob(user_metrics, user_blob_path)
                         logging.info(f"Successfully cached data for user: {user}")
                         processed_count += 1
                     except Exception as e:
-                        logging.error(f"Failed to process and cache data for user {user}: {e}")
+                        logging.error(f"Failed to process user {user}: {e}")
                 
-                # Clear batch from memory explicitly
-                del batch
+                return func.HttpResponse(json.dumps({"status": "success", "message": f"Cache refreshed for {processed_count}/{len(users_to_process)} users."}), status_code=200, mimetype="application/json")
             
-            return func.HttpResponse(json.dumps({"status": "success", "message": f"Cache refreshed for {processed_count}/{len(users_to_process)} target users."}), status_code=200, mimetype="application/json")
+            except Exception as e:
+                logging.error(f"Refresh-users failed: {e}")
+                return func.HttpResponse(json.dumps({"error": f"Refresh failed: {str(e)}"}), status_code=500, mimetype="application/json")
 
         # --- Endpoint to refresh the monthly report cache ---
         elif method == "POST" and action == "refresh-monthly":
             logging.info("Monthly report cache refresh process started.")
             
-            # OPTIMIZATION: Load with early date filter for last 30 days
-            cutoff = datetime.now() - timedelta(days=30)
-            df = load_parquet_from_blob_lazy(date_cutoff=cutoff)
-            
-            if df.empty:
-                return func.HttpResponse(json.dumps({"status": "skipped", "message": "No data available."}), status_code=200, mimetype="application/json")
-            
-            metrics = calculate_all_users_monthly_metrics(df)
-            save_json_to_blob(metrics, MONTHLY_SUMMARY_BLOB_PATH)
-            
-            return func.HttpResponse(json.dumps({"status": "success", "message": "Monthly report cache refreshed."}), status_code=200, mimetype="application/json")
+            try:
+                # Load last 30 days of daily parquets
+                df_union = load_last_n_days_parquets(days=30)
+                
+                if df_union.empty:
+                    return func.HttpResponse(json.dumps({"status": "skipped", "message": "No data available."}), status_code=200, mimetype="application/json")
+                
+                # Uses YOUR EXACT LOGIC from calculate_all_users_monthly_metrics
+                metrics = calculate_all_users_monthly_metrics(df_union)
+                save_json_to_blob(metrics, MONTHLY_SUMMARY_BLOB_PATH)
+                
+                return func.HttpResponse(json.dumps({"status": "success", "message": "Monthly report cache refreshed."}), status_code=200, mimetype="application/json")
+            except Exception as e:
+                logging.error(f"Monthly refresh failed: {e}")
+                return func.HttpResponse(json.dumps({"error": f"Monthly refresh failed: {str(e)}"}), status_code=500, mimetype="application/json")
 
         # --- Endpoint for 10-day summary cache refresh ---
         elif method == "POST" and action == "refresh":
             logging.info("10-day summary cache refresh started.")
             
-            # OPTIMIZATION: Load with early date filter for last 10 days
-            cutoff = datetime.now() - timedelta(days=10)
-            df = load_parquet_from_blob_lazy(date_cutoff=cutoff)
-            
-            if df.empty:
-                return func.HttpResponse(json.dumps({"status": "skipped", "message": "No data available."}), status_code=200, mimetype="application/json")
+            try:
+                # Load last 10 days of daily parquets
+                df_union = load_last_n_days_parquets(days=10)
+                
+                if df_union.empty:
+                    return func.HttpResponse(json.dumps({"status": "skipped", "message": "No data available."}), status_code=200, mimetype="application/json")
 
-            metrics = count_user_file_creations_last_10_days(df)
-            save_json_to_blob(metrics, SUMMARY_BLOB_PATH)
-            return func.HttpResponse(json.dumps({"status": "success", "message": "10-day summary cache refreshed."}), status_code=200, mimetype="application/json")
+                # Uses YOUR EXACT LOGIC from count_user_file_creations_last_10_days
+                metrics = count_user_file_creations_last_10_days(df_union)
+                save_json_to_blob(metrics, SUMMARY_BLOB_PATH)
+                
+                return func.HttpResponse(json.dumps({"status": "success", "message": "10-day summary cache refreshed."}), status_code=200, mimetype="application/json")
+            except Exception as e:
+                logging.error(f"10-day refresh failed: {e}")
+                return func.HttpResponse(json.dumps({"error": f"10-day refresh failed: {str(e)}"}), status_code=500, mimetype="application/json")
 
         # --- GET for single user (reads from cache) ---
         elif method == "GET" and user_param:

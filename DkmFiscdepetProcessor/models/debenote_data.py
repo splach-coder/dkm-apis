@@ -68,4 +68,5 @@ class DebenoteData:
     # Computed fields
     amount_in_words: str
     vatnote: str
-    formatted_total: str 
+    formatted_total: str
+    DECLARATIONGUID: str 

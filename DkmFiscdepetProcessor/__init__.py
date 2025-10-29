@@ -49,9 +49,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         
         for row in rows:
             try:
+                
                 # Transform SQL row to DebenoteData object
                 debenote_data = transform_row(row)
                 
+                logging.error(debenote_data)
+                               
                 # Generate PDF
                 pdf_bytes = generate_pdf(debenote_data)
                 
@@ -76,7 +79,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         "bedrag": debenote_data.factuurtotaal,
                         "munt": debenote_data.munt,
                         "c88": debenote_data.c88nummer,
-                        "commercialreference": debenote_data.commercialreference
+                        "commercialreference": debenote_data.commercialreference,
+                        "declarationGuid": debenote_data.DECLARATIONGUID
                     }
                 )
                 

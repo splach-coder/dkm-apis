@@ -85,7 +85,8 @@ def transform_row(row: dict) -> DebenoteData:
             line_items=line_items,
             amount_in_words=amount_words,
             vatnote=vatnote,
-            formatted_total=formatted_total
+            formatted_total=formatted_total,
+            DECLARATIONGUID=row.get('DECLARATIONGUID', '')
         )
         
         return debenote

@@ -52,8 +52,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 
                 # Transform SQL row to DebenoteData object
                 debenote_data = transform_row(row)
-                
-                logging.error(debenote_data)
                                
                 # Generate PDF
                 pdf_bytes = generate_pdf(debenote_data)

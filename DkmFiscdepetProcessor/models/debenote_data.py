@@ -49,6 +49,8 @@ class DebenoteData:
     factuurtotaal: float
     munt: str
     email: str
+    emails_to: str
+    emails_cc: str
     
     
     # References

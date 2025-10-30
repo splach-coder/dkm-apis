@@ -96,8 +96,12 @@ def draw_header_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
     c.drawString(x_address, y_address, f"{data.client.landcode}{data.client.plda_operatoridentity}")
     
     y_address -= 15
-    if data.email is not None and data.email.strip() != "":
-        c.drawString(x_address, y_address, f"mail: {data.email}")
+    if data.emails_to is not None and data.emails_to.strip() != "": 
+        c.drawString(x_address, y_address, f"Mail: To: {data.emails_to}")
+        
+    if data.emails_cc is not None and data.emails_cc.strip() != "":    
+        y_address -= 11
+        c.drawString(x_address, y_address, f"         Cc:{data.emails_cc}")
     
     # Tighter spacing
     y = start_y - 58*mm

@@ -143,6 +143,72 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         action = req.route_params.get('action')
         user_param = req.params.get('user')
         all_users_param = req.params.get('all_users', 'false').lower() == 'true'
+        
+        # --- NEW: Endpoint to migrate existing all_data.parquet into daily parquets ---
+        # This is a one-time initialization endpoint
+        # POST /api/migrate-to-daily will read all_data.parquet, split by date, save as daily parquets
+        if method == "POST" and action == "migrate-to-daily":
+            logging.info("Starting migration from all_data.parquet to daily parquets...")
+            
+            try:
+                # Load the old all_data.parquet
+                logging.info("Loading statistics_check/all_data.parquet...")
+                blob_client = blob_service_client.get_blob_client(CONTAINER_NAME, "statistics_check/all_data.parquet")
+                
+                if not blob_client.exists():
+                    return func.HttpResponse(json.dumps({"error": "all_data.parquet not found at statistics_check/all_data.parquet"}), status_code=404, mimetype="application/json")
+                
+                df_all = pd.read_parquet(io.BytesIO(blob_client.download_blob().readall()))
+                logging.info(f"Loaded all_data.parquet with {len(df_all)} rows")
+                
+                if df_all.empty:
+                    return func.HttpResponse(json.dumps({"error": "all_data.parquet is empty"}), status_code=400, mimetype="application/json")
+                
+                # Clean datetime column
+                df_all["HISTORYDATETIME"] = pd.to_datetime(df_all["HISTORYDATETIME"], errors="coerce", format="mixed")
+                df_all = df_all.dropna(subset=["HISTORYDATETIME"])
+                
+                # Filter for last 90 days from 27/09/2025
+                reference_date = datetime(2025, 9, 27)
+                cutoff_date = reference_date - timedelta(days=90)
+                
+                df_filtered = df_all[(df_all["HISTORYDATETIME"].dt.date >= cutoff_date.date()) & 
+                                    (df_all["HISTORYDATETIME"].dt.date <= reference_date.date())]
+                
+                logging.info(f"Filtered to {len(df_filtered)} rows between {cutoff_date.date()} and {reference_date.date()}")
+                
+                if df_filtered.empty:
+                    return func.HttpResponse(json.dumps({"error": "No data found in the 90-day range"}), status_code=400, mimetype="application/json")
+                
+                # Add metadata
+                df_filtered = add_file_metadata(df_filtered)
+                
+                # Group by date and save each day as a separate parquet
+                df_filtered['DATE'] = df_filtered["HISTORYDATETIME"].dt.date
+                
+                daily_count = 0
+                for day_date, group_df in df_filtered.groupby('DATE'):
+                    day_str = day_date.strftime("%Y-%m-%d")
+                    daily_path = f"{DAILY_PARQUET_PREFIX}{day_str}.parquet"
+                    
+                    # Save this day's data
+                    buffer = io.BytesIO()
+                    group_df.drop('DATE', axis=1).to_parquet(buffer, index=False, compression='snappy')
+                    
+                    blob_client_day = blob_service_client.get_blob_client(CONTAINER_NAME, daily_path)
+                    blob_client_day.upload_blob(buffer.getvalue(), overwrite=True)
+                    
+                    logging.info(f"Created daily parquet: {day_str} with {len(group_df)} rows")
+                    daily_count += 1
+                
+                return func.HttpResponse(json.dumps({
+                    "status": "success", 
+                    "message": f"Migration complete. Created {daily_count} daily parquets from {len(df_filtered)} rows."
+                }), status_code=200, mimetype="application/json")
+            
+            except Exception as e:
+                logging.error(f"Migration failed: {e}")
+                return func.HttpResponse(json.dumps({"error": f"Migration failed: {str(e)}"}), status_code=500, mimetype="application/json")
 
         # --- Endpoint to add new raw data (with metadata pre-calculation) ---
         if method == "POST" and not action:

@@ -452,10 +452,77 @@ def draw_footer_clean(c: canvas.Canvas, data: DebenoteData, y: float, width: flo
 
     # Map country codes to names for readability
     country_names = {
-        "FR": "FRANCE", "NL": "NETHERLAND", "DE": "GERMANY",
-        "PT": "PORTUGAL", "SK": "SLOVAKIA", "BE": "BELGIUM",
-        "ES": "SPAIN", "IT": "ITALY", "PL": "POLAND", "AT": "AUSTRIA"
-    }
+    # Europe
+    "FR": "FRANCE",
+    "NL": "NETHERLANDS",
+    "DE": "GERMANY",
+    "PT": "PORTUGAL",
+    "SK": "SLOVAKIA",
+    "BE": "BELGIUM",
+    "ES": "SPAIN",
+    "IT": "ITALY",
+    "PL": "POLAND",
+    "AT": "AUSTRIA",
+    "GB": "UNITED KINGDOM",
+    "IE": "IRELAND",
+    "CH": "SWITZERLAND",
+    "SE": "SWEDEN",
+    "NO": "NORWAY",
+    "FI": "FINLAND",
+    "DK": "DENMARK",
+    "GR": "GREECE",
+    "HU": "HUNGARY",
+    "CZ": "CZECH REPUBLIC",
+    "RU": "RUSSIA",
+    "UA": "UKRAINE",
+    "RO": "ROMANIA",
+    "HR": "CROATIA",
+    "BG": "BULGARIA",
+    "LT": "LITHUANIA",
+    "LV": "LATVIA",
+    "EE": "ESTONIA",
+    "IS": "ICELAND",
+    "MT": "MALTA",
+    "CY": "CYPRUS",
+
+    # North America
+    "US": "UNITED STATES",
+    "CA": "CANADA",
+    "MX": "MEXICO",
+
+    # South America
+    "BR": "BRAZIL",
+    "AR": "ARGENTINA",
+    "CO": "COLOMBIA",
+    "CL": "CHILE",
+    "PE": "PERU",
+
+    # Asia
+    "CN": "CHINA",
+    "IN": "INDIA",
+    "JP": "JAPAN",
+    "KR": "SOUTH KOREA",
+    "ID": "INDONESIA",
+    "PK": "PAKISTAN",
+    "BD": "BANGLADESH",
+    "VN": "VIETNAM",
+    "TH": "THAILAND",
+    "MY": "MALAYSIA",
+    "PH": "PHILIPPINES",
+    "SA": "SAUDI ARABIA",
+    "TR": "TÜRKIYE",
+
+    # Africa
+    "NG": "NIGERIA",
+    "ZA": "SOUTH AFRICA",
+    "EG": "EGYPT",
+    "KE": "KENYA",
+    "MA": "MOROCCO",
+
+    # Oceania
+    "AU": "AUSTRALIA",
+    "NZ": "NEW ZEALAND",
+}
     country = country_names.get(data.relatie.landcode, data.relatie.landcode)
     c.drawString(23 * mm, y, country)
     y -= 9

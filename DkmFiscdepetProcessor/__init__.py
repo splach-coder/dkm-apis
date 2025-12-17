@@ -7,7 +7,7 @@ from typing import List
 from .services.data_transformer import transform_row
 from .services.pdf_generator import generate_pdf
 from .services.state_manager import update_state, get_max_id
-from .services.bestdoc_state_manager import update_bestdoc_state
+from .services.bestdoc_state_manager import add_to_daily_queue
 from .models.response_model import APIResponse, PDFResponse
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -84,7 +84,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 )
                 
                 pdfs.append(pdf_response)
-                update_bestdoc_state(pdf_response)
+                add_to_daily_queue(row)
                 logging.info(f"✅ Generated PDF for INTERNFACTUURNUMMER: {debenote_data.internfactuurnummer}")
                 
             except Exception as e:

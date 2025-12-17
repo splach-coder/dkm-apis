@@ -1,0 +1,1009 @@
+The following is a digest of the repository "DgArrivalProcessor".
+This digest is designed to be easily parsed by Large Language Models.
+
+--- SUMMARY ---
+Repository: DgArrivalProcessor
+Files Analyzed: 7
+Total Text Size: 29.4 KB
+Estimated Tokens (text only): ~5,960
+
+--- DIRECTORY STRUCTURE ---
+DgArrivalProcessor/
+├── models/
+│   ├── arrival_request.py
+│   └── ncts_schema.py
+├── services/
+│   ├── api_client.py
+│   ├── auth_manager.py
+│   ├── transformer.py
+│   └── validator.py
+└── __init__.py
+
+
+--- FILE CONTENTS ---
+============================================================
+FILE: services/api_client.py
+============================================================
+"""
+HTTP client for ObiBatch API with retry logic
+"""
+import logging
+import requests
+import time
+from typing import Dict, Callable
+from functools import wraps
+
+
+def retry(max_attempts: int = 3, backoff: float = 2.0, exceptions=(Exception,)):
+    """
+    Retry decorator with exponential backoff
+    
+    Args:
+        max_attempts: Maximum number of retry attempts
+        backoff: Base backoff time in seconds (will be exponential)
+        exceptions: Tuple of exceptions to catch
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    if attempt == max_attempts - 1:
+                        raise
+                    
+                    wait_time = backoff ** attempt
+                    logging.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+        return wrapper
+    return decorator
+
+
+class ObiBatchClient:
+    """
+    HTTP client for ObiBatch API with retry logic and error handling
+    """
+    
+    BASE_URL = "https://obibatch.ad.dkm-customs.com/api/be-ncts/batch"
+    TENANT_ID = "DKM_VP"
+    TIMEOUT_SECONDS = 30
+    
+    def __init__(self, auth_manager):
+        """
+        Initialize API client
+        
+        Args:
+            auth_manager: AuthManager instance for token management
+        """
+        self.auth_manager = auth_manager
+        self.session = requests.Session()
+    
+    def send_arrival(self, payload: Dict) -> Dict:
+        """
+        Send arrival notification to API
+        
+        Args:
+            payload: NCTS-compliant JSON
+            
+        Returns:
+            API response dict
+            
+        Raises:
+            APIError: If API call fails
+        """
+        logging.info("Sending arrival notification to ObiBatch API")
+        
+        try:
+            # Get authentication token
+            token = self.auth_manager.get_token()
+            
+            # Build headers
+            headers = self._build_headers(token)
+            
+            # Build URL
+            url = f"{self.BASE_URL}/arrivals/"
+            
+            # Send request with retry logic
+            response = self._send_request(url, payload, headers)
+            
+            # Handle response
+            return self._handle_response(response)
+            
+        except Exception as e:
+            logging.error(f"Failed to send arrival notification: {str(e)}")
+            raise
+    
+    def _build_headers(self, token: str) -> Dict:
+        """
+        Build request headers with auth and tenant
+        
+        Args:
+            token: Bearer token
+            
+        Returns:
+            Headers dict
+        """
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+            "x-Tenant-Id": self.TENANT_ID
+        }
+    
+    @retry(
+        max_attempts=3,
+        backoff=2.0,
+        exceptions=(requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+    )
+    def _send_request(self, url: str, payload: Dict, headers: Dict):
+        """
+        Send HTTP request with retry logic
+        
+        Args:
+            url: API endpoint URL
+            payload: JSON payload
+            headers: Request headers
+            
+        Returns:
+            Response object
+            
+        Raises:
+            Various requests exceptions
+        """
+        logging.info(f"PUT {url}")
+        
+        response = self.session.put(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=self.TIMEOUT_SECONDS
+        )
+        
+        return response
+    
+    def _handle_response(self, response) -> Dict:
+        """
+        Handle API response with error checking
+        
+        Args:
+            response: Response object from requests
+            
+        Returns:
+            Parsed response dict
+            
+        Raises:
+            APIError: If response indicates failure
+        """
+        try:
+            # Check for HTTP errors
+            if response.status_code >= 400:
+                error_detail = ""
+                try:
+                    error_data = response.json()
+                    error_detail = error_data.get("message", response.text)
+                except:
+                    error_detail = response.text
+                
+                raise APIError(
+                    f"API returned status {response.status_code}: {error_detail}",
+                    status_code=response.status_code,
+                    response_text=response.text
+                )
+            
+            # Parse JSON response
+            if response.content:
+                response_data = response.json()
+            else:
+                response_data = {"success": True}
+            
+            logging.info(f"API call successful: {response.status_code}")
+            return {
+                "success": True,
+                "status_code": response.status_code,
+                "data": response_data,
+                "submissionId": response_data.get("id", response_data.get("lrn"))
+            }
+            
+        except APIError:
+            raise
+        except ValueError as e:
+            logging.error(f"Failed to parse API response: {e}")
+            raise APIError(f"Invalid JSON response from API: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error handling response: {e}")
+            raise APIError(f"Failed to process API response: {e}")
+    
+    def close(self):
+        """Close HTTP session"""
+        self.session.close()
+
+
+class APIError(Exception):
+    """Raised when ObiBatch API call fails"""
+    
+    def __init__(self, message: str, status_code: int = None, response_text: str = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_text = response_text
+
+============================================================
+FILE: services/auth_manager.py
+============================================================
+"""
+OAuth authentication manager with token caching
+"""
+import logging
+import requests
+from datetime import datetime, timedelta
+from typing import Dict, Optional
+
+
+class AuthManager:
+    """
+    Manages OAuth authentication with token caching to reduce API calls
+    """
+    
+    TOKEN_URL = "https://obibatch.ad.dkm-customs.com:5002/connect/token"
+    CLIENT_ID = "client.ssw.dkm"
+    CLIENT_SECRET = "vZFAWP5E18Lq"  # TODO: Move to Key Vault
+    SCOPE = "be.ncts.integration"
+    GRANT_TYPE = "client_credentials"
+    
+    # Token refresh buffer (refresh 5 minutes before expiry)
+    REFRESH_BUFFER_SECONDS = 300
+    
+    def __init__(self):
+        """Initialize auth manager with empty cache"""
+        self.token_cache = {
+            "access_token": None,
+            "expires_at": None
+        }
+    
+    def get_token(self) -> str:
+        """
+        Get valid access token (cached or fresh)
+        
+        Returns:
+            Bearer token string
+            
+        Raises:
+            AuthenticationError: If token retrieval fails
+        """
+        # Check if cached token is still valid
+        if self._is_token_valid():
+            logging.info("Using cached OAuth token")
+            return self.token_cache["access_token"]
+        
+        # Request new token
+        logging.info("Requesting new OAuth token")
+        token_data = self._request_new_token()
+        
+        # Cache the new token
+        self._cache_token(token_data)
+        
+        return self.token_cache["access_token"]
+    
+    def _is_token_valid(self) -> bool:
+        """
+        Check if cached token is still valid
+        
+        Returns:
+            True if token exists and not expired
+        """
+        if not self.token_cache["access_token"]:
+            return False
+        
+        if not self.token_cache["expires_at"]:
+            return False
+        
+        # Check if token will expire soon
+        now = datetime.utcnow()
+        return now < self.token_cache["expires_at"]
+    
+    def _request_new_token(self) -> Dict:
+        """
+        Request new token from OAuth server
+        
+        Returns:
+            Token response data
+            
+        Raises:
+            AuthenticationError: If request fails
+        """
+        payload = {
+            "client_id": self.CLIENT_ID,
+            "client_secret": self.CLIENT_SECRET,
+            "scope": self.SCOPE,
+            "grant_type": self.GRANT_TYPE
+        }
+        
+        try:
+            response = requests.post(
+                self.TOKEN_URL,
+                data=payload,
+                timeout=10
+            )
+            
+            response.raise_for_status()
+            token_data = response.json()
+            
+            logging.info("Successfully obtained OAuth token")
+            return token_data
+            
+        except requests.exceptions.HTTPError as e:
+            error_msg = f"HTTP error during authentication: {e}"
+            if e.response:
+                error_msg += f" - {e.response.text}"
+            logging.error(error_msg)
+            raise AuthenticationError(error_msg)
+        
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Network error during authentication: {e}"
+            logging.error(error_msg)
+            raise AuthenticationError(error_msg)
+        
+        except ValueError as e:
+            error_msg = f"Invalid JSON response from auth server: {e}"
+            logging.error(error_msg)
+            raise AuthenticationError(error_msg)
+    
+    def _cache_token(self, token_data: Dict):
+        """
+        Store token with expiry time
+        
+        Args:
+            token_data: Token response from OAuth server
+        """
+        access_token = token_data.get("access_token")
+        expires_in = token_data.get("expires_in", 3600)  # Default 1 hour
+        
+        # Calculate expiry time with buffer
+        expires_at = datetime.utcnow() + timedelta(
+            seconds=expires_in - self.REFRESH_BUFFER_SECONDS
+        )
+        
+        self.token_cache = {
+            "access_token": access_token,
+            "expires_at": expires_at
+        }
+        
+        logging.info(f"Token cached, expires at {expires_at.isoformat()}")
+    
+    def clear_cache(self):
+        """Clear token cache (useful for testing or forced refresh)"""
+        self.token_cache = {
+            "access_token": None,
+            "expires_at": None
+        }
+        logging.info("Token cache cleared")
+
+
+class AuthenticationError(Exception):
+    """Raised when OAuth authentication fails"""
+    pass
+
+============================================================
+FILE: services/transformer.py
+============================================================
+"""
+NCTS schema transformation service for D&G Arrival Requests
+"""
+import logging
+import json
+from datetime import datetime
+from typing import Dict, List
+
+
+class NCTSTransformer:
+    """
+    Transforms validated form data to NCTS arrival notification schema
+    """
+    
+    # Default values
+    DEFAULT_CUSTOMS_OFFICE = "BE000600"  # Belgian customs office
+    DEFAULT_UNLOCODE = "BEANR"  # Antwerp
+    DEFAULT_LOCATION_TYPE = "B"
+    DEFAULT_QUALIFIER = "U"
+    DEFAULT_RELATION_GROUP = "DKM"
+    DEFAULT_LANGUAGE = "EN"
+    
+    def transform(self, form_data: Dict) -> Dict:
+        """
+        Main transformation method - converts form data to NCTS schema
+        
+        Args:
+            form_data: Validated form data
+            
+        Returns:
+            NCTS-compliant JSON payload
+        """
+        logging.info("Starting NCTS transformation")
+        
+        try:
+            ncts_payload = {
+                "$type": "Arrival.Notification",
+                "format": "ncts",
+                "language": self.DEFAULT_LANGUAGE,
+                "declaration": self._build_declaration_section(form_data),
+                "master": self._build_master_section(form_data),
+                "integration": self._build_integration_section(form_data)
+            }
+            
+            logging.info("NCTS transformation completed successfully")
+            return ncts_payload
+            
+        except Exception as e:
+            logging.error(f"Transformation error: {str(e)}")
+            raise TransformationError(f"Failed to transform data: {str(e)}")
+    
+    def _build_declaration_section(self, data: Dict) -> Dict:
+        """
+        Build declaration section of NCTS schema
+        
+        Args:
+            data: Form data
+            
+        Returns:
+            Declaration section dict
+        """
+        mrns = data.get("mrns", [])
+        reference = data.get("reference", "")
+        klant = data.get("klant", "")
+        timestamp = data.get("submissionTimestamp") or datetime.utcnow().isoformat() + "Z"
+        
+        return {
+            "lrn": reference,  # Local Reference Number
+            "mrn": mrns[0] if mrns else "",  # Primary MRN
+            "simplifiedProcedure": False,
+            "incidentFlag": False,
+            "arrivalNotificationDateTime": timestamp,
+            "authorisation": [],
+            "customsOfficeOfDestination": {
+                "referenceNumber": self.DEFAULT_CUSTOMS_OFFICE
+            },
+            "traderAtDestination": {
+                "references": {
+                    "internal": reference
+                },
+                "name": klant,
+                "phoneNumber": "",
+                "identificationNumber": "",
+                "emailAddress": "",
+                "communicationLanguageAtDestination": self.DEFAULT_LANGUAGE
+            }
+        }
+    
+    def _build_master_section(self, data: Dict) -> Dict:
+        """
+        Build master section with location of goods
+        
+        Args:
+            data: Form data
+            
+        Returns:
+            Master section dict
+        """
+        reference = data.get("reference", "")
+        
+        return {
+            "locationOfGoods": {
+                "internalReference": reference,
+                "unlocode": self.DEFAULT_UNLOCODE,
+                "typeOfLocation": self.DEFAULT_LOCATION_TYPE,
+                "qualifierOfIdentification": self.DEFAULT_QUALIFIER,
+                "authorisationNumber": "",
+                "additionalIdentifier": ""
+            }
+        }
+    
+    def _build_integration_section(self, data: Dict) -> Dict:
+        """
+        Build integration section with DKM-specific settings
+        
+        Args:
+            data: Form data
+            
+        Returns:
+            Integration section dict
+        """
+        reference = data.get("reference", "")
+        klant = data.get("klant", "")
+        mrns = data.get("mrns", [])
+        
+        # Handle multiple MRNs
+        external_refs = self._handle_multiple_mrns(mrns)
+        
+        return {
+            "language": self.DEFAULT_LANGUAGE,
+            "sendingMode": "BATCH",
+            "templateCode": "ARRIVAL_NCTS",
+            "printGroup": "DEFAULT",
+            "externalReferences": external_refs,
+            "createDeclaration": True,
+            "autoSendDeclaration": True,
+            "simplifiedProcedure": False,
+            "consolidateBeforeSending": False,
+            "principal": {
+                "references": {
+                    "internal": reference
+                },
+                "contactPerson": {
+                    "references": {
+                        "internal": reference
+                    },
+                    "name": klant
+                },
+                "sendMail": False,
+                "contactPersonExportConfirmation": {
+                    "references": {
+                        "internal": reference
+                    },
+                    "name": klant
+                },
+                "sendMailExportConfirmation": False
+            },
+            "control": {
+                "packages": 0,
+                "grossmass": 0.0,
+                "netmass": 0.0
+            },
+            "relationGroup": self.DEFAULT_RELATION_GROUP,
+            "commercialReference": reference,
+            "variableFields": [],
+            "procedureType": "NCTS",
+            "declarationCreatedBy": "DKM_ARRIVAL_FORM",
+            "attachment": []
+        }
+    
+    def _handle_multiple_mrns(self, mrns: List[str]) -> Dict:
+        """
+        Handle multiple MRNs by storing additional ones in metadata
+        
+        Args:
+            mrns: List of MRN strings
+            
+        Returns:
+            External references dict
+        """
+        external_refs = {
+            "LinkIdErp1": None,
+            "LinkIdErp2": None,
+            "LinkIdErp3": None,
+            "LinkIdErp4": None,
+            "LinkIdErp5": None
+        }
+        
+        # If multiple MRNs, store additional ones in LinkIdErp1
+        if len(mrns) > 1:
+            additional_mrns = mrns[1:]
+            external_refs["LinkIdErp1"] = json.dumps({
+                "additional_mrns": additional_mrns,
+                "total_count": len(mrns)
+            })
+            logging.info(f"Stored {len(additional_mrns)} additional MRNs in metadata")
+        
+        return external_refs
+
+
+class TransformationError(Exception):
+    """Raised when schema transformation fails"""
+    pass
+
+============================================================
+FILE: services/validator.py
+============================================================
+"""
+Input validation service for D&G Arrival Requests
+"""
+import logging
+import re
+from typing import Dict, List
+from dataclasses import dataclass
+
+
+@dataclass
+class ValidationResult:
+    """Result of validation operation"""
+    valid: bool
+    errors: List[str]
+
+
+class ArrivalValidator:
+    """
+    Validates incoming arrival request data according to business rules
+    """
+    
+    # Validation patterns
+    MRN_PATTERN = re.compile(r'^[A-Z0-9]{8,20}$')
+    REFERENCE_PATTERN = re.compile(r'^[A-Z0-9]{4,15}$')
+    KLANT_PATTERN = re.compile(r'^[A-Za-z\s]{2,50}$')
+    
+    def validate(self, data: Dict) -> ValidationResult:
+        """
+        Validate all fields according to business rules
+        
+        Args:
+            data: Raw form data from frontend
+            
+        Returns:
+            ValidationResult with errors or success
+        """
+        errors = []
+        
+        # Validate MRNs
+        mrn_errors = self._validate_mrns(data.get("mrns"))
+        errors.extend(mrn_errors)
+        
+        # Validate Reference
+        ref_error = self._validate_reference(data.get("reference"))
+        if ref_error:
+            errors.append(ref_error)
+        
+        # Validate Klant
+        klant_error = self._validate_klant(data.get("klant"))
+        if klant_error:
+            errors.append(klant_error)
+        
+        # Validate optional fields
+        timestamp_error = self._validate_timestamp(data.get("submissionTimestamp"))
+        if timestamp_error:
+            errors.append(timestamp_error)
+        
+        return ValidationResult(
+            valid=len(errors) == 0,
+            errors=errors
+        )
+    
+    def _validate_mrns(self, mrns) -> List[str]:
+        """
+        Validate MRN format (8-20 alphanumeric uppercase)
+        
+        Args:
+            mrns: List of MRN strings
+            
+        Returns:
+            List of error messages
+        """
+        errors = []
+        
+        if not mrns:
+            errors.append("At least one MRN number is required")
+            return errors
+        
+        if not isinstance(mrns, list):
+            errors.append("MRNs must be provided as an array")
+            return errors
+        
+        if len(mrns) == 0:
+            errors.append("At least one MRN number is required")
+            return errors
+        
+        for mrn in mrns:
+            if not mrn:
+                errors.append("Empty MRN value not allowed")
+                continue
+            
+            # Sanitize
+            mrn = str(mrn).strip().upper()
+            
+            # Check format
+            if not self.MRN_PATTERN.match(mrn):
+                errors.append(f"Invalid MRN format: '{mrn}'. Must be 8-20 alphanumeric characters (uppercase)")
+        
+        return errors
+    
+    def _validate_reference(self, reference: str) -> str:
+        """
+        Validate reference format (4-15 alphanumeric uppercase)
+        
+        Args:
+            reference: Reference string
+            
+        Returns:
+            Error message or None
+        """
+        if not reference:
+            return "Reference number is required"
+        
+        # Sanitize
+        reference = str(reference).strip().upper()
+        
+        # Check format
+        if not self.REFERENCE_PATTERN.match(reference):
+            return f"Invalid reference format: '{reference}'. Must be 4-15 alphanumeric characters (uppercase)"
+        
+        return None
+    
+    def _validate_klant(self, klant: str) -> str:
+        """
+        Validate client name (2-50 letters/spaces)
+        
+        Args:
+            klant: Client name string
+            
+        Returns:
+            Error message or None
+        """
+        if not klant:
+            return "Client name (Klant) is required"
+        
+        # Don't uppercase klant - keep original case
+        klant = str(klant).strip()
+        
+        # Check format
+        if not self.KLANT_PATTERN.match(klant):
+            return f"Invalid client name format: '{klant}'. Must be 2-50 characters (letters and spaces only)"
+        
+        return None
+    
+    def _validate_timestamp(self, timestamp: str) -> str:
+        """
+        Validate ISO 8601 timestamp format (optional field)
+        
+        Args:
+            timestamp: ISO timestamp string
+            
+        Returns:
+            Error message or None
+        """
+        if not timestamp:
+            return None  # Optional field
+        
+        try:
+            from datetime import datetime
+            datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            return None
+        except (ValueError, AttributeError):
+            return f"Invalid timestamp format: '{timestamp}'. Must be ISO 8601 format (e.g., 2025-01-24T10:30:00Z)"
+    
+    @staticmethod
+    def sanitize_input(value: str, field_type: str) -> str:
+        """
+        Remove dangerous characters from input
+        
+        Args:
+            value: Input string
+            field_type: Type of field (mrn, reference, klant)
+            
+        Returns:
+            Sanitized string
+        """
+        if not value:
+            return ""
+        
+        value = str(value).strip()
+        
+        if field_type in ['mrn', 'reference']:
+            # Only uppercase alphanumeric
+            value = value.upper()
+            value = re.sub(r'[^A-Z0-9]', '', value)
+        elif field_type == 'klant':
+            # Only letters and spaces
+            value = re.sub(r'[^A-Za-z\s]', '', value)
+            value = ' '.join(value.split())  # Normalize spaces
+        
+        return value
+
+============================================================
+FILE: __init__.py
+============================================================
+"""
+D&G Arrival Processor - Main Azure Function
+Orchestrates the arrival request processing workflow
+"""
+import logging
+import azure.functions as func
+import json
+import uuid
+from datetime import datetime
+
+from .services.api_client import ObiBatchClient, APIError, AuthenticationError
+from .services.auth_manager import AuthManager
+from .services.validator import ArrivalValidator
+from .services.transformer import NCTSTransformer
+
+# Initialize services (singleton pattern for token caching)
+auth_manager = AuthManager()
+validator = ArrivalValidator()
+transformer = NCTSTransformer()
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Main HTTP trigger for D&G Arrival Request processing
+    
+    Workflow:
+    1. Parse and validate input
+    2. Transform to NCTS schema
+    3. Authenticate with OAuth
+    4. Send to ObiBatch API
+    5. Return response
+    """
+    # Generate request ID for tracing
+    request_id = str(uuid.uuid4())
+    logging.info(f"[{request_id}] DgArrivalProcessor triggered")
+    
+    # Only accept POST requests
+    if req.method != "POST":
+        return create_error_response(
+            request_id=request_id,
+            error="Method not allowed",
+            status_code=405
+        )
+    
+    try:
+        # STEP 1: Parse incoming request
+        body = req.get_json()
+        logging.info(f"[{request_id}] Received form data with {len(body.get('mrns', []))} MRNs")
+        
+        # STEP 2: Validate input
+        validation_result = validator.validate(body)
+        if not validation_result.valid:
+            logging.warning(f"[{request_id}] Validation failed: {validation_result.errors}")
+            return create_validation_error_response(
+                request_id=request_id,
+                errors=validation_result.errors
+            )
+        
+        logging.info(f"[{request_id}] Validation successful")
+        
+        # STEP 3: Transform to NCTS schema
+        try:
+            ncts_payload = transformer.transform(body)
+            logging.info(f"[{request_id}] Transformation successful")
+        except Exception as e:
+            logging.error(f"[{request_id}] Transformation failed: {str(e)}")
+            return create_error_response(
+                request_id=request_id,
+                error="Transformation failed",
+                details=str(e),
+                status_code=500
+            )
+        
+        # STEP 4: Send to ObiBatch API
+        api_client = ObiBatchClient(auth_manager)
+        try:
+            api_response = api_client.send_arrival(ncts_payload)
+            logging.info(f"[{request_id}] API call successful: {api_response.get('submissionId')}")
+            
+            # STEP 5: Return success response
+            return create_success_response(
+                request_id=request_id,
+                submission_id=api_response.get("submissionId"),
+                mrns=body.get("mrns", []),
+                api_data=api_response.get("data", {})
+            )
+            
+        except AuthenticationError as e:
+            logging.error(f"[{request_id}] Authentication failed: {str(e)}")
+            return create_error_response(
+                request_id=request_id,
+                error="Authentication failed",
+                details=str(e),
+                status_code=401
+            )
+        except APIError as e:
+            logging.error(f"[{request_id}] API call failed: {str(e)}")
+            return create_error_response(
+                request_id=request_id,
+                error="Database submission failed",
+                details=str(e),
+                status_code=e.status_code or 500
+            )
+        finally:
+            api_client.close()
+            
+    except ValueError as e:
+        logging.error(f"[{request_id}] Invalid JSON: {str(e)}")
+        return create_error_response(
+            request_id=request_id,
+            error="Invalid request format",
+            details=str(e),
+            status_code=400
+        )
+    except Exception as e:
+        logging.error(f"[{request_id}] Unexpected error: {str(e)}", exc_info=True)
+        return create_error_response(
+            request_id=request_id,
+            error="Internal server error",
+            details=str(e),
+            status_code=500
+        )
+
+
+def create_success_response(
+    request_id: str,
+    submission_id: str,
+    mrns: list,
+    api_data: dict
+) -> func.HttpResponse:
+    """
+    Create success response
+    
+    Args:
+        request_id: Request tracking ID
+        submission_id: Submission ID from API
+        mrns: List of MRNs processed
+        api_data: Additional data from API
+        
+    Returns:
+        HTTP 200 response
+    """
+    response_body = {
+        "success": True,
+        "message": "Arrival request submitted successfully",
+        "submissionId": submission_id,
+        "mrns": mrns,
+        "requestId": request_id,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+    
+    return func.HttpResponse(
+        json.dumps(response_body),
+        status_code=200,
+        mimetype="application/json"
+    )
+
+
+def create_validation_error_response(
+    request_id: str,
+    errors: list
+) -> func.HttpResponse:
+    """
+    Create validation error response
+    
+    Args:
+        request_id: Request tracking ID
+        errors: List of validation error messages
+        
+    Returns:
+        HTTP 400 response
+    """
+    response_body = {
+        "success": False,
+        "error": "Validation failed",
+        "details": errors,
+        "requestId": request_id,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+    
+    return func.HttpResponse(
+        json.dumps(response_body),
+        status_code=400,
+        mimetype="application/json"
+    )
+
+
+def create_error_response(
+    request_id: str,
+    error: str,
+    details: str = None,
+    status_code: int = 500
+) -> func.HttpResponse:
+    """
+    Create generic error response
+    
+    Args:
+        request_id: Request tracking ID
+        error: Error message
+        details: Detailed error information
+        status_code: HTTP status code
+        
+    Returns:
+        HTTP error response
+    """
+    response_body = {
+        "success": False,
+        "error": error,
+        "requestId": request_id,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+    
+    if details:
+        response_body["details"] = details
+    
+    return func.HttpResponse(
+        json.dumps(response_body),
+        status_code=status_code,
+        mimetype="application/json"
+    )

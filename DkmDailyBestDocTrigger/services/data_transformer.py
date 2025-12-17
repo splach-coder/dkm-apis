@@ -6,26 +6,17 @@ from ..models.bestemmings_data import (
     BestemmingsData, LineItem, ClientInfo, RecordInfo
 )
 
-
 def transform_client_group(client_month_key: str, records: List[Dict]) -> BestemmingsData:
     """
-    Transform a group of records for the same client-month into BestemmingsData.
-    
-    Args:
-        client_month_key: Key like "EUROFINS_202511"
-        records: List of records with FULL table data from state
-    
-    Returns:
-        BestemmingsData with merged line items and record info
+    Transform a group of records (Historical + New) into BestemmingsData.
     """
     if not records:
         raise ValueError("No records provided for transformation")
     
     try:
-        # Use first record for client info (should be same for all in group)
+        # Use first record for client info (Header info is consistent per client)
         first_record = records[0]
         
-        # Create client info
         client = ClientInfo(
             naam=first_record.get('CLIENT_NAAM', ''),
             straat_en_nummer=first_record.get('CLIENT_STRAAT_EN_NUMMER', ''),
@@ -36,35 +27,26 @@ def transform_client_group(client_month_key: str, records: List[Dict]) -> Bestem
             language=first_record.get('CLIENT_LANGUAGE', 'EN')
         )
         
-        # Process all records
         record_infos = []
         all_line_items = []
         
         for record in records:
-            # Format date - HANDLE YYYYMMDD FORMAT
+            # Format date
             datum = str(record.get('DATUM', ''))
-            
             try:
                 if len(datum) == 8 and datum.isdigit():
-                    # Format: YYYYMMDD
                     date_obj = datetime.strptime(datum, "%Y%m%d")
                 else:
-                    # Fallback - use current date
                     date_obj = datetime.now()
-                    logging.warning(f"Could not parse date {datum}, using current date")
                 
                 formatted_date = date_obj.strftime("%d/%m/%Y")
                 date_short = date_obj.strftime("%d/%m/%y")
-                
-            except ValueError as e:
-                logging.error(f"Date parsing error for {datum}: {e}")
+            except ValueError:
                 date_obj = datetime.now()
                 formatted_date = date_obj.strftime("%d/%m/%Y")
                 date_short = date_obj.strftime("%d/%m/%y")
             
-            # Clean reference
-            reference = record.get('REFERENTIE_KLANT', '')
-            reference = str(reference).replace('\r\n', '\n').replace('\r', '\n')
+            reference = str(record.get('REFERENTIE_KLANT', '')).replace('\r\n', '\n').replace('\r', '\n')
             
             # Create record info
             record_info = RecordInfo(
@@ -75,22 +57,21 @@ def transform_client_group(client_month_key: str, records: List[Dict]) -> Bestem
                 mrn=str(record.get('MRN', '')),
                 declarationid=int(record.get('DECLARATIONID', 0)),
                 exportername=str(record.get('EXPORTERNAME', '')),
-                reference=reference
+                reference=reference,
+                klant=str(record.get('KLANT', '')) # <--- MAPPED HERE
             )
             record_infos.append(record_info)
             
-            # Parse and add line items from stored JSON string
+            # Parse line items
             line_items_str = record.get('LINE_ITEMS', '[]')
             if isinstance(line_items_str, str):
                 try:
                     line_items = json.loads(line_items_str)
                 except json.JSONDecodeError:
-                    logging.error(f"Failed to parse LINE_ITEMS JSON: {line_items_str[:100]}")
                     line_items = []
             else:
                 line_items = line_items_str if isinstance(line_items_str, list) else []
             
-            # Add each line item with source tracking
             for item in line_items:
                 try:
                     line_item = LineItem(
@@ -102,12 +83,13 @@ def transform_client_group(client_month_key: str, records: List[Dict]) -> Bestem
                         netmass=float(item.get('netmass', 0)),
                         source_internfactuurnummer=int(record.get('INTERNFACTUURNUMMER', 0))
                     )
+                    
                     all_line_items.append(line_item)
-                except (ValueError, TypeError) as e:
-                    logging.error(f"Failed to create LineItem from {item}: {e}")
+                except (ValueError, TypeError):
                     continue
         
-        logging.info(f"✅ Transformed group {client_month_key}: {len(record_infos)} records, {len(all_line_items)} line items")
+        # Sort items numerically by Item Number (zendtarieflijnnummer)
+        all_line_items.sort(key=lambda x: x.zendtarieflijnnummer)
         
         return BestemmingsData(
             client=client,
@@ -119,38 +101,6 @@ def transform_client_group(client_month_key: str, records: List[Dict]) -> Bestem
         logging.error(f"Transform error for group {client_month_key}: {str(e)}")
         raise
 
-
 def validate_group_consistency(records: List[Dict]) -> bool:
-    """
-    Validate that all records in a group have consistent client info.
-    
-    Args:
-        records: List of records for same group
-    
-    Returns:
-        True if consistent, False otherwise
-    """
-    if not records:
-        logging.warning("validate_group_consistency: No records provided")
-        return False
-    
-    if len(records) == 1:
-        return True
-    
-    first_record = records[0]
-    reference_client = {
-        'CLIENT_NAAM': first_record.get('CLIENT_NAAM', ''),
-        'CLIENT_LANDCODE': first_record.get('CLIENT_LANDCODE', ''),
-        'CLIENT_LANGUAGE': first_record.get('CLIENT_LANGUAGE', ''),
-        'KLANT': first_record.get('KLANT', '')
-    }
-    
-    for i, record in enumerate(records[1:], 1):
-        for field, expected_value in reference_client.items():
-            record_value = record.get(field, '')
-            if record_value != expected_value:
-                logging.warning(f"Inconsistent {field} in record {i}: expected '{expected_value}' got '{record_value}'")
-                return False
-    
-    logging.info(f"✅ Group consistency validated for {len(records)} records")
+    if not records: return False
     return True

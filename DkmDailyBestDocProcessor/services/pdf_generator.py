@@ -293,9 +293,6 @@ def draw_table(c: canvas.Canvas, data, y: float, width: float, font_family: str)
     
     # --- Pagination Logic ---
     bottom_margin = 15*mm
-    
-    # --- Pagination Logic ---
-    bottom_margin = 15*mm
     loop_count = 0
     
     while True:
@@ -348,11 +345,6 @@ def draw_table(c: canvas.Canvas, data, y: float, width: float, font_family: str)
                 else:
                     pieces = pieces_new
                     # Proceed to handle pieces
-            
-            # Draw the part that fits
-            part0 = pieces[0]
-            h0 = part0.wrap(width, avail_height)[1]
-            part0.drawOn(c, 15*mm, y - h0)
             
             # Draw the part that fits
             part0 = pieces[0]

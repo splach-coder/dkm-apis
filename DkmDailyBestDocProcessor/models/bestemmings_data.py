@@ -35,6 +35,7 @@ class RecordInfo:
     exportername: str
     reference: str
     klant: str  # <--- ADDED THIS FIELD
+    declarationguid: str = "" # Added field
 
 @dataclass
 class BestemmingsData:

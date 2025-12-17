@@ -58,7 +58,8 @@ def transform_client_group(client_month_key: str, records: List[Dict]) -> Bestem
                 declarationid=int(record.get('DECLARATIONID', 0)),
                 exportername=str(record.get('EXPORTERNAME', '')),
                 reference=reference,
-                klant=str(record.get('KLANT', '')) # <--- MAPPED HERE
+                klant=str(record.get('KLANT', '')), # <--- MAPPED HERE
+                declarationguid=str(record.get('DECLARATIONGUID', ''))
             )
             record_infos.append(record_info)
             

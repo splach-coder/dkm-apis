@@ -174,7 +174,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     metadata={
                         "klant": bestemmings_data.client.naam,
                         "date": today_str,
-                        "included_ids": group_ids
+                        "included_ids": group_ids,
+                        "declaration_guids": [record.declarationguid for record in bestemmings_data.records],
+                        # Email Template Fields
+                        "amount": f"{bestemmings_data.total_value:.2f}",
+                        "currency": "EUR",
+                        "c88": bestemmings_data.primary_record.mrn,
+                        "datum": bestemmings_data.primary_record.datum, # Record date
+                        "commercialreference": bestemmings_data.primary_record.reference,
+                        "declaration_guid": bestemmings_data.primary_record.declarationguid # Primary/First GUID for tag
                     }
                 )
                 processed_pdfs.append(pdf_response)

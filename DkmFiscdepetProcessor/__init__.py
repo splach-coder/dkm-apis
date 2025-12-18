@@ -79,7 +79,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         "munt": debenote_data.munt,
                         "c88": debenote_data.c88nummer,
                         "commercialreference": debenote_data.commercialreference,
-                        "declarationGuid": debenote_data.DECLARATIONGUID
+                        "declarationGuid": debenote_data.DECLARATIONGUID,
+                        "emails_to": debenote_data.emails_to,
+                        "emails_cc": debenote_data.emails_cc
                     }
                 )
                 

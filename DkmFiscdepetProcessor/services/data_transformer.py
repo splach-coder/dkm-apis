@@ -88,7 +88,10 @@ def transform_row(row: dict) -> DebenoteData:
             amount_in_words=amount_words,
             vatnote=vatnote,
             formatted_total=formatted_total,
-            DECLARATIONGUID=row.get('DECLARATIONGUID', '')
+            DECLARATIONGUID=row.get('DECLARATIONGUID', ''),
+            principal=row.get('PRINCIPAL', ''),
+            principal_email=row.get('PRINCIPAL_EMAIL', ''),
+            principal_cc=row.get('PRINCIPAL_CC', '').strip()
         )
         
         return debenote

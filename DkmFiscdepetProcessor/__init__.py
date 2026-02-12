@@ -81,7 +81,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         "commercialreference": debenote_data.commercialreference,
                         "declarationGuid": debenote_data.DECLARATIONGUID,
                         "emails_to": debenote_data.emails_to,
-                        "emails_cc": debenote_data.emails_cc
+                        "emails_cc": debenote_data.emails_cc,
+                        "principal": debenote_data.principal,
+                        "principal_email": debenote_data.principal_email,
+                        "principal_cc": debenote_data.principal_cc
                     }
                 )
                 

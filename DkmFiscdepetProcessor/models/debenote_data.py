@@ -71,4 +71,9 @@ class DebenoteData:
     amount_in_words: str
     vatnote: str
     formatted_total: str
-    DECLARATIONGUID: str 
+    DECLARATIONGUID: str
+
+    # Principal
+    principal: str
+    principal_email: str
+    principal_cc: str

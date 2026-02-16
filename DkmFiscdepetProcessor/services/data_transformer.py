@@ -91,7 +91,7 @@ def transform_row(row: dict) -> DebenoteData:
             DECLARATIONGUID=row.get('DECLARATIONGUID', ''),
             principal=row.get('PRINCIPAL', ''),
             principal_email=row.get('PRINCIPAL_EMAIL', ''),
-            principal_cc=row.get('PRINCIPAL_CC', '').strip()
+            principal_cc=(row.get('PRINCIPAL_CC') or '').strip()
         )
         
         return debenote

@@ -101,6 +101,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 })
         
         # 3. Update state with max processed ID
+        processed_ids = []
         if pdfs:
             processed_ids = [p.internfactuurnummer for p in pdfs if getattr(p, "internfactuurnummer", None)]
             new_max_id = max(processed_ids)

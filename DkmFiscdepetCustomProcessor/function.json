@@ -5,7 +5,12 @@
             "type": "httpTrigger",
             "direction": "in",
             "name": "req",
-            "methods": ["get", "post", "delete"]
+            "methods": [
+                "get",
+                "post",
+                "delete"
+            ],
+            "route": "custom/debenote"
         },
         {
             "type": "http",

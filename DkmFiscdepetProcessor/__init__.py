@@ -8,6 +8,7 @@ from .services.data_transformer import transform_row
 from .services.pdf_generator import generate_pdf
 from .services.state_manager import update_state, get_max_id
 from .services.bestdoc_state_manager import add_to_daily_queue
+from .services.principal_service import get_principals_list
 from .models.response_model import APIResponse, PDFResponse
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -48,11 +49,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         pdfs = []
         errors = []
         
+        # Fetch configured principals list for email routing
+        principals_list = get_principals_list()
+        
         for row in rows:
             try:
                 
                 # Transform SQL row to DebenoteData object
                 debenote_data = transform_row(row)
+                
+                # Route emails based on principal list
+                if debenote_data.principal and debenote_data.principal in principals_list:
+                    debenote_data.emails_to = debenote_data.principal_email
+                    debenote_data.emails_cc = debenote_data.principal_cc
                                
                 # Generate PDF
                 pdf_bytes = generate_pdf(debenote_data)

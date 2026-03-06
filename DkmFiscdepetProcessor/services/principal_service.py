@@ -27,7 +27,7 @@ def get_principals_list() -> list:
         data = blob_client.download_blob().readall().decode("utf-8")
         parsed_data = json.loads(data)
         
-        principals = parsed_data.get("principals", [])
+        principals = [str(p).upper() for p in parsed_data.get("principals", [])]
         _principals_cache = principals
         return principals
     except Exception as e:

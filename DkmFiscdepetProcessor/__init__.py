@@ -59,7 +59,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 debenote_data = transform_row(row)
                 
                 # Route emails based on principal list
-                if debenote_data.principal and debenote_data.principal in principals_list:
+                if debenote_data.principal and str(debenote_data.principal).upper() in principals_list:
                     debenote_data.emails_to = debenote_data.principal_email
                     debenote_data.emails_cc = debenote_data.principal_cc
                                

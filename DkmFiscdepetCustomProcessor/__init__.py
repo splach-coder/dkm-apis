@@ -2,13 +2,9 @@ import logging
 import azure.functions as func
 import json
 from datetime import datetime
-from typing import List
 
 from .services.data_transformer import transform_row
 from .services.pdf_generator import generate_pdf
-from .services.state_manager import update_state, get_max_id
-from .services.bestdoc_state_manager import add_to_daily_queue
-from .services.principal_service import get_principals_list
 from .models.response_model import APIResponse, PDFResponse
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -49,19 +45,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         pdfs = []
         errors = []
         
-        # Fetch configured principals list for email routing
-        principals_list = get_principals_list()
-        
         for row in rows:
             try:
                 
                 # Transform SQL row to DebenoteData object
                 debenote_data = transform_row(row)
-                
-                # Route emails based on principal list
-                if debenote_data.principal and str(debenote_data.principal).upper() in principals_list:
-                    debenote_data.emails_to = debenote_data.principal_email
-                    debenote_data.emails_cc = debenote_data.principal_cc
                                
                 # Generate PDF
                 pdf_bytes = generate_pdf(debenote_data)
@@ -93,13 +81,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         "emails_cc": debenote_data.emails_cc,
                         "principal": debenote_data.principal,
                         "principal_email": debenote_data.principal_email,
-                        "principal_cc": debenote_data.principal_cc,
-                        "filetype": "creditnote" if debenote_data.factuurtotaal < 0 else "fiscalnote"
+                        "principal_cc": debenote_data.principal_cc
                     }
                 )
                 
                 pdfs.append(pdf_response)
-                add_to_daily_queue(row)
                 logging.info(f"✅ Generated PDF for INTERNFACTUURNUMMER: {debenote_data.internfactuurnummer}")
                 
             except Exception as e:
@@ -110,22 +96,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     "error": str(e)
                 })
         
-        # 3. Update state with max processed ID
-        processed_ids = []
-        if pdfs:
-            processed_ids = [p.internfactuurnummer for p in pdfs if getattr(p, "internfactuurnummer", None)]
-            new_max_id = max(processed_ids)
-            update_state(processed_ids, new_max_id)
 
-            logging.info(f"Updated state: lastProcessedId = {new_max_id}")
-        
         # 4. Build response
         response = APIResponse(
             success=True,
             timestamp=datetime.utcnow().isoformat() + "Z",
             processed_count=len(pdfs),
-            processed_ids=processed_ids,
-            last_processed_id=get_max_id(rows) if pdfs else 0,
             pdfs=[pdf.__dict__ for pdf in pdfs],
             errors=errors
         )

@@ -159,6 +159,15 @@ def draw_document_info_clean(c, data, y: float, width: float) -> float:
     c.setFont(font_name, font_size)
     c.setFillColor(colors.black)
 
+    # --- CREDIT NOTE label (shown when total amount is negative) ---
+    if data.factuurtotaal < 0:
+        c.setFont("Helvetica-Bold", 13)
+        c.setFillColor(colors.black)
+        y += 30
+        c.drawString(label_x, y, "CREDIT NOTE")
+        y -= 30
+        c.setFont(font_name, font_size)
+
     # --- VATNOTE ---
     vatnote_text = f"{data.processfactuurnummer} {data.datum}"
     c.drawString(label_x, y, "VATNOTE:")

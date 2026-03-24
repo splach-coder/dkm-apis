@@ -84,7 +84,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         "emails_cc": debenote_data.emails_cc,
                         "principal": debenote_data.principal,
                         "principal_email": debenote_data.principal_email,
-                        "principal_cc": debenote_data.principal_cc
+                        "principal_cc": debenote_data.principal_cc,
+                        "filetype": "creditnote" if debenote_data.factuurtotaal < 0 else "fiscalnote"
                     }
                 )
                 

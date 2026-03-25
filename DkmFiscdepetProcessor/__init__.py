@@ -94,7 +94,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         "principal": debenote_data.principal,
                         "principal_email": debenote_data.principal_email,
                         "principal_cc": debenote_data.principal_cc,
-                        "filetype": "creditnote" if debenote_data.factuurtotaal < 0 else "fiscalnote"
+                        "filetype": "creditnote" if debenote_data.factuurtotaal < 0 else "fiscalnote",
+                        "klant_is_leverancier": debenote_data.client.relatiecode.strip().upper() != debenote_data.relatiecode_leverancier.strip().upper()
                     }
                 )
                 

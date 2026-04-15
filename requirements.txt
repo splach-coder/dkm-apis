@@ -12,3 +12,5 @@ requests==2.32.3
 pyarrow==21.0.0
 reportlab==4.4.4
 num2words==0.5.14
+PyJWT==2.9.0
+cryptography==43.0.3

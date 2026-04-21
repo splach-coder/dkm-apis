@@ -10,7 +10,7 @@ import requests
 from dataclasses import dataclass
 
 
-DOCUSIGN_BASE_URL = "https://demo.docusign.net/restapi/v2.1"
+DOCUSIGN_BASE_URL = "https://eu.docusign.net/restapi/v2.1"
 
 # Must match the recipient role name set in the DocuSign template
 RECIPIENT_ROLE_NAME = "Client"

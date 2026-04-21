@@ -14,9 +14,9 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 
 
-# DocuSign sandbox constants
-DOCUSIGN_AUTH_URL = "https://account-d.docusign.com/oauth/token"
-DOCUSIGN_AUDIENCE = "account-d.docusign.com"
+# DocuSign production constants
+DOCUSIGN_AUTH_URL = "https://account.docusign.com/oauth/token"
+DOCUSIGN_AUDIENCE = "account.docusign.com"
 TOKEN_EXPIRY_SECONDS = 3600
 REFRESH_BUFFER_SECONDS = 300
 
@@ -115,6 +115,8 @@ class DocuSignAuthService:
             return data["access_token"]
         except requests.exceptions.HTTPError as e:
             body = e.response.text if e.response else ""
+            status = e.response.status_code if e.response else ""
+            logging.error(f"DocuSign token exchange failed — status: {status}, body: {body}")
             raise DocuSignAuthError(f"DocuSign token exchange failed: {e} — {body}")
         except Exception as e:
             raise DocuSignAuthError(f"Unexpected error during token exchange: {e}")

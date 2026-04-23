@@ -5,7 +5,7 @@ import json
 import os
 import base64
 from datetime import datetime
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient, ContentSettings
 from .services.data_transformer import transform_client_group
 from .services.pdf_generator import generate_pdf
 from .models.response_model import APIResponse, PDFResponse
@@ -18,6 +18,30 @@ OUTPUT_FOLDER = "Bestemmingsrapport/Generated"
 
 # Placeholder URL - User needs to add this to their App Settings
 LOGIC_APP_URL = os.getenv("DATA_FETCHER_LOGIC_APP_URL", "https://prod-85.westeurope.logic.azure.com:443/workflows/9c70e08c39244c5e9bd1370c65e856c6/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=DTA47iRv1P5PW9Tye6VI_EWjsbIyJDJSAABxxrFKBVQ")
+
+
+def _first_non_empty(values):
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _safe_int_text(value):
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        text = str(value).strip() if value is not None else ""
+        return text
+
+
+def _safe_metadata_text(value):
+    if value is None:
+        return ""
+    return str(value).strip()[:512]
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
@@ -158,6 +182,68 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 # Example: BS-EN-CLIENTNAME-3RECS-20251217.pdf
                 filename = f"BS-{lang}-{safe_klant}-{len(group_data)}RECS-{today_str}.pdf"
                 output_filename = f"{OUTPUT_FOLDER}/{today_str}/{filename}"
+
+                declaration_ids = [
+                    _safe_int_text(r.get("DECLARATIONID", ""))
+                    for r in group_data
+                    if str(r.get("DECLARATIONID", "")).strip()
+                ]
+                process_numbers = [
+                    _safe_int_text(r.get("PROCESSFACTUURNUMMER", ""))
+                    for r in group_data
+                    if str(r.get("PROCESSFACTUURNUMMER", "")).strip()
+                ]
+                recipient_email = _first_non_empty(
+                    [
+                        group_data[0].get("EMAIL"),
+                        group_data[0].get("EMAILS_TO"),
+                        group_data[0].get("MAIL"),
+                        group_data[0].get("CLIENT_EMAIL")
+                    ]
+                )
+                recipient_name = _first_non_empty(
+                    [
+                        group_data[0].get("NAME"),
+                        group_data[0].get("EXPORTERNAME"),
+                        group_data[0].get("CLIENT_NAAM"),
+                        bestemmings_data.client.naam
+                    ]
+                )
+                signer_function = _first_non_empty(
+                    [
+                        group_data[0].get("SIGNER_FUNCTION"),
+                        group_data[0].get("IMPORTERCODE"),
+                        "Importer"
+                    ]
+                )
+                client_naam = _safe_metadata_text(_first_non_empty([group_data[0].get("CLIENT_NAAM"), bestemmings_data.client.naam]))
+                client_straat_en_nummer = _safe_metadata_text(_first_non_empty([group_data[0].get("CLIENT_STRAAT_EN_NUMMER"), bestemmings_data.client.straat_en_nummer]))
+                client_postcode = _safe_metadata_text(_first_non_empty([group_data[0].get("CLIENT_POSTCODE"), bestemmings_data.client.postcode]))
+                client_stad = _safe_metadata_text(_first_non_empty([group_data[0].get("CLIENT_STAD"), bestemmings_data.client.stad]))
+                client_landcode = _safe_metadata_text(_first_non_empty([group_data[0].get("CLIENT_LANDCODE"), bestemmings_data.client.landcode]))
+                client_plda_operatoridentity = _safe_metadata_text(_first_non_empty([group_data[0].get("CLIENT_PLDA_OPERATORIDENTITY"), bestemmings_data.client.plda_operatoridentity]))
+                blob_metadata = {
+                    "declaration_ids": ",".join(declaration_ids),
+                    "processfactuurnummers": ",".join(process_numbers),
+                    "recipient_email": recipient_email,
+                    "recipient_name": recipient_name,
+                    "signer_function": signer_function,
+                    "client_naam": client_naam,
+                    "client_straat_en_nummer": client_straat_en_nummer,
+                    "client_postcode": client_postcode,
+                    "client_stad": client_stad,
+                    "client_landcode": client_landcode,
+                    "client_plda_operatoridentity": client_plda_operatoridentity,
+                    "created_date": today_str
+                }
+
+                output_blob_client = container_client.get_blob_client(output_filename)
+                output_blob_client.upload_blob(
+                    pdf_bytes,
+                    overwrite=True,
+                    content_settings=ContentSettings(content_type="application/pdf"),
+                    metadata=blob_metadata
+                )
                 
                 # Encode for Response
                 pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
@@ -176,6 +262,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                         "date": today_str,
                         "included_ids": group_ids,
                         "declaration_guids": [record.declarationguid for record in bestemmings_data.records],
+                        "storage_container": CONTAINER_NAME,
+                        "storage_path": output_filename,
+                        "storage_url": output_blob_client.url,
+                        "recipient_email": recipient_email,
+                        "recipient_name": recipient_name,
+                        "signer_function": signer_function,
+                        "client_naam": client_naam,
+                        "client_straat_en_nummer": client_straat_en_nummer,
+                        "client_postcode": client_postcode,
+                        "client_stad": client_stad,
+                        "client_landcode": client_landcode,
+                        "client_plda_operatoridentity": client_plda_operatoridentity,
                         # Email Template Fields
                         "amount": f"{bestemmings_data.total_value:.2f}",
                         "currency": "EUR",

@@ -6,8 +6,13 @@ Sends dynamic PDF contracts using Composite Templates:
 """
 import os
 import logging
+import time
 import requests
 from dataclasses import dataclass
+
+_CONTACTS_CACHE = None
+_CONTACTS_CACHE_TIME = None
+CACHE_EXPIRY_SECONDS = 3600  # Cache contacts for 1 hour
 
 
 DOCUSIGN_BASE_URL = "https://eu.docusign.net/restapi/v2.1"
@@ -24,6 +29,7 @@ class EnvelopeRequest:
     signer_function: str
     document_name: str = "Contract"
     email_subject: str = "Please sign your contract"
+    status: str = "sent"  # 'sent' or 'created' (Draft)
 
 
 @dataclass
@@ -57,7 +63,7 @@ class DocuSignService:
         url = f"{DOCUSIGN_BASE_URL}/accounts/{account_id}/envelopes"
         body = {
             "emailSubject": request.email_subject,
-            "status": "sent",
+            "status": request.status,
             "compositeTemplates": [
                 {
                     # Template provides the field/tab positions (signer_name, signer_function, sign_here)
@@ -127,6 +133,71 @@ class DocuSignService:
             return response.json()
         except Exception as e:
             raise DocuSignServiceError(f"Failed to get envelope status: {e}")
+
+    def _fetch_all_contacts(self) -> dict:
+        """Fetch the fully synchronized JSON contacts database from Azure Blob Storage."""
+        from azure.storage.blob import BlobServiceClient
+        import json
+        
+        contacts_dict = {}
+        try:
+            connect_str = os.getenv("AzureWebJobsStorage")
+            if not connect_str:
+                logging.error("Missing AzureWebJobsStorage")
+                return contacts_dict
+                
+            blob_service = BlobServiceClient.from_connection_string(connect_str)
+            blob_client = blob_service.get_blob_client(container="document-intelligence", blob="contacts_db.json")
+            
+            if not blob_client.exists():
+                logging.error("contacts_db.json not found in blob storage. Run download script first.")
+                return contacts_dict
+                
+            data = blob_client.download_blob().readall()
+            contacts_list = json.loads(data)
+            
+            for c in contacts_list:
+                name = c.get("name", "")
+                emails = c.get("emails", [])
+                if name and emails and len(emails) > 0:
+                    contacts_dict[name.lower()] = emails[0]
+                    
+        except Exception as e:
+            logging.error(f"Failed to read contacts_db.json from blob: {e}")
+            
+        return contacts_dict
+
+    def get_client_email(self, client_name: str) -> str:
+        """
+        Search the Blob-synced Address Book for a client name using exact partial matching.
+        """
+        if not client_name:
+            return ""
+            
+        global _CONTACTS_CACHE, _CONTACTS_CACHE_TIME
+        now = time.time()
+        
+        if _CONTACTS_CACHE is None or _CONTACTS_CACHE_TIME is None or (now - _CONTACTS_CACHE_TIME > CACHE_EXPIRY_SECONDS):
+            logging.info("Downloading all contacts from Blob DB to warm the memory cache...")
+            try:
+                _CONTACTS_CACHE = self._fetch_all_contacts()
+                _CONTACTS_CACHE_TIME = now
+                logging.info(f"Successfully cached {len(_CONTACTS_CACHE)} contacts from blob.")
+            except Exception as e:
+                logging.error(f"Failed to cache complete contacts list: {e}")
+                return ""
+        
+        # Exact match first
+        target = client_name.lower().strip()
+        if target in _CONTACTS_CACHE:
+            return _CONTACTS_CACHE[target]
+            
+        # Strict substring Match (no fuzzy-wuzzy)
+        for name, email in _CONTACTS_CACHE.items():
+            if target in name:
+                return email
+                
+        return ""
 
 
 class DocuSignServiceError(Exception):

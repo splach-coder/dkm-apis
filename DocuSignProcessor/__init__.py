@@ -60,6 +60,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if delete_blob_after_send is None:
         delete_blob_after_send = True
 
+    client_naam = body.get("client_naam")
+    # Status can be 'sent' or 'created' (Draft). Default is 'sent'.
+    envelope_status = body.get("status") or "sent"
+    
     if not pdf_blob_path and (declaration_id is not None or processfactuurnummer is not None):
         try:
             resolved = _resolve_pdf_from_ids(
@@ -71,24 +75,22 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             recipient_email = recipient_email or resolved.get("recipient_email")
             recipient_name = recipient_name or resolved.get("recipient_name")
             signer_function = signer_function or resolved.get("signer_function")
+            
+            client_landcode = resolved.get("client_landcode", "")
+            client_plda = resolved.get("client_plda_operatoridentity", "")
+            
+            if client_landcode and client_plda:
+                # Use strict VAT/Tax ID string as the keyword
+                client_naam = f"{client_landcode}{client_plda}".strip()
+            else:
+                client_naam = client_naam or resolved.get("client_naam")
+                
         except Exception as e:
             logging.error(f"Failed to resolve PDF from IDs: {e}")
             return _error_response("Failed to resolve document from declaration_id/processfactuurnummer", 404)
 
-    if not all([recipient_email, recipient_name, signer_function]):
-        return _error_response(
-            "Missing required signer fields. Provide recipient data or ensure blob metadata contains recipient_email, recipient_name, signer_function.",
-            400
-        )
     if not pdf_base64 and not pdf_blob_path:
         return _error_response("Provide pdf_base64, pdf_blob_path, or declaration_id/processfactuurnummer", 400)
-
-    if not pdf_base64 and pdf_blob_path:
-        try:
-            pdf_base64 = _read_pdf_base64_from_blob(pdf_blob_container, pdf_blob_path)
-        except Exception as e:
-            logging.error(f"Failed to load PDF from blob: {e}")
-            return _error_response(f"Failed to load PDF from blob path '{pdf_blob_path}'", 500)
 
     # --- Auth ---
     try:
@@ -96,6 +98,37 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     except DocuSignAuthError as e:
         logging.error(f"DocuSign auth failed: {e}")
         return _error_response(f"Authentication failed: {e}", 500)
+
+    # --- Setup Service & Lookups ---
+    service = DocuSignService(access_token)
+    
+    # If we don't have the email but we do have a name to search by, query DocuSign Contacts
+    if not recipient_email:
+        search_target = client_naam or recipient_name
+        if search_target:
+            logging.info(f"Email missing, searching DocuSign Contacts for: {search_target}")
+            recipient_email = service.get_client_email(search_target)
+            if not recipient_email:
+                logging.warning(f"Could not find strict email match for '{search_target}' in contacts.")
+    else:
+        logging.info(f"Using provided recipient email: {recipient_email}. Skipping DocuSign Contacts search.")
+
+    # Apply defaults 
+    recipient_name = recipient_name or client_naam or "Client"
+    signer_function = signer_function or "Importer"
+
+    if not recipient_email:
+        return _error_response(
+            "Missing recipient_email and no match found in DocuSign Contacts. Ensure email is provided or contact exists.",
+            400
+        )
+
+    if not pdf_base64 and pdf_blob_path:
+        try:
+            pdf_base64 = _read_pdf_base64_from_blob(pdf_blob_container, pdf_blob_path)
+        except Exception as e:
+            logging.error(f"Failed to load PDF from blob: {e}")
+            return _error_response(f"Failed to load PDF from blob path '{pdf_blob_path}'", 500)
 
     # --- Send envelope ---
     try:
@@ -106,7 +139,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             recipient_name=recipient_name,
             signer_function=signer_function,
             document_name=body.get("document_name", "Contract"),
-            email_subject=body.get("email_subject", "Please sign your contract")
+            email_subject=body.get("email_subject", "Please sign your contract"),
+            status=envelope_status
         )
         result = service.send_envelope(envelope_request)
 

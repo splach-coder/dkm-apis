@@ -13,6 +13,7 @@ from dataclasses import dataclass
 _CONTACTS_CACHE = None
 _CONTACTS_CACHE_TIME = None
 CACHE_EXPIRY_SECONDS = 3600  # Cache contacts for 1 hour
+LIVE_CONTACTS_LOOKUP_ENV = "DOCUSIGN_ENABLE_LIVE_CONTACTS_LOOKUP"
 
 
 DOCUSIGN_BASE_URL = "https://eu.docusign.net/restapi/v2.1"
@@ -167,11 +168,19 @@ class DocuSignService:
             
         return contacts_dict
 
+    def _live_lookup_enabled(self) -> bool:
+        """
+        Live DocuSign contacts lookup is opt-in.
+        Default is disabled so send/precheck stays fast and relies on blob-synced contacts only.
+        """
+        raw_value = os.getenv(LIVE_CONTACTS_LOOKUP_ENV, "").strip().lower()
+        return raw_value in {"1", "true", "yes", "on"}
+
     def get_client_email(self, client_name: str) -> str:
         """
         Resolve client email using:
         1) Blob-synced contacts cache (fast)
-        2) Live DocuSign Contacts API fallback
+        2) Optional live DocuSign Contacts API fallback when explicitly enabled
         """
         if not client_name:
             return ""
@@ -198,6 +207,13 @@ class DocuSignService:
         for name, email in _CONTACTS_CACHE.items():
             if target in name:
                 return email
+
+        if not self._live_lookup_enabled():
+            logging.info(
+                "No blob contact match for '%s'; live DocuSign contacts lookup is disabled.",
+                client_name
+            )
+            return ""
 
         # Fallback to live DocuSign contacts if access token is available
         live_email = self._search_contact_email_live(target)

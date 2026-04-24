@@ -23,6 +23,8 @@ REFRESH_BUFFER_SECONDS = 300
 # Key Vault
 KEYVAULT_URL = "https://kv-functions-python.vault.azure.net"
 PRIVATE_KEY_SECRET_NAME = "docusign-private-key"
+DOCUSIGN_SENDER_USER_ID_ENV = "DOCUSIGN_SENDER_USER_ID"
+DOCUSIGN_DEFAULT_USER_ID_ENV = "DOCUSIGN_USER_ID"
 
 
 class DocuSignAuthService:
@@ -86,9 +88,18 @@ class DocuSignAuthService:
     def _build_jwt(self, private_key: str) -> str:
         """Build signed JWT assertion for DocuSign."""
         now = int(time.time())
+        sender_user_id = (
+            os.getenv(DOCUSIGN_SENDER_USER_ID_ENV)
+            or os.getenv(DOCUSIGN_DEFAULT_USER_ID_ENV)
+        )
+        if not sender_user_id:
+            raise DocuSignAuthError(
+                f"Missing {DOCUSIGN_SENDER_USER_ID_ENV} or {DOCUSIGN_DEFAULT_USER_ID_ENV}"
+            )
+
         payload = {
             "iss": os.environ["DOCUSIGN_INTEGRATION_KEY"],
-            "sub": os.environ["DOCUSIGN_USER_ID"],
+            "sub": sender_user_id,
             "aud": DOCUSIGN_AUDIENCE,
             "iat": now,
             "exp": now + TOKEN_EXPIRY_SECONDS,

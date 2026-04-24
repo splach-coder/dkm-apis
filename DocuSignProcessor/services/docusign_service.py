@@ -46,10 +46,10 @@ class DocuSignService:
     """
 
     def __init__(self, access_token: str):
-        self._headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
+        self._access_token = access_token or ""
+        self._headers = {"Content-Type": "application/json"}
+        if self._access_token:
+            self._headers["Authorization"] = f"Bearer {self._access_token}"
 
     def send_envelope(self, request: EnvelopeRequest) -> EnvelopeResult:
         """
@@ -169,7 +169,9 @@ class DocuSignService:
 
     def get_client_email(self, client_name: str) -> str:
         """
-        Search the Blob-synced Address Book for a client name using exact partial matching.
+        Resolve client email using:
+        1) Blob-synced contacts cache (fast)
+        2) Live DocuSign Contacts API fallback
         """
         if not client_name:
             return ""
@@ -196,8 +198,72 @@ class DocuSignService:
         for name, email in _CONTACTS_CACHE.items():
             if target in name:
                 return email
-                
+
+        # Fallback to live DocuSign contacts if access token is available
+        live_email = self._search_contact_email_live(target)
+        if live_email:
+            _CONTACTS_CACHE[target] = live_email
+            return live_email
+
         return ""
+
+    def _search_contact_email_live(self, target: str) -> str:
+        """
+        Query live DocuSign contacts API for a specific search target.
+        Returns the best email match or empty string.
+        """
+        if not self._access_token:
+            return ""
+
+        account_id = os.environ.get("DOCUSIGN_ACCOUNT_ID", "")
+        if not account_id:
+            logging.warning("DOCUSIGN_ACCOUNT_ID missing; skipping live contacts lookup.")
+            return ""
+
+        base_url = f"{DOCUSIGN_BASE_URL}/accounts/{account_id}/contacts"
+        params = {"search_text": target}
+        contacts_raw = []
+        current_url = base_url
+
+        try:
+            while current_url:
+                response = requests.get(
+                    current_url,
+                    headers=self._headers,
+                    params=params if current_url == base_url else None,
+                    timeout=15
+                )
+                response.raise_for_status()
+                data = response.json()
+                contacts_raw.extend(data.get("contacts", []))
+
+                next_uri = data.get("nextUri")
+                if not next_uri:
+                    current_url = None
+                elif "accounts/" in next_uri:
+                    path = next_uri.split("accounts/")[1]
+                    current_url = f"{DOCUSIGN_BASE_URL}/accounts/{path}"
+                else:
+                    current_url = next_uri
+
+            exact_match_email = ""
+            partial_match_email = ""
+            for raw in contacts_raw:
+                name = str(raw.get("name", "")).strip().lower()
+                emails = raw.get("emails") or []
+                email = emails[0] if emails else ""
+                if not email:
+                    continue
+                if name == target:
+                    exact_match_email = email
+                    break
+                if not partial_match_email and target in name:
+                    partial_match_email = email
+
+            return exact_match_email or partial_match_email
+        except Exception as e:
+            logging.warning(f"Live contacts lookup failed for '{target}': {e}")
+            return ""
 
 
 class DocuSignServiceError(Exception):
